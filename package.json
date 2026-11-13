@@ -14,7 +14,6 @@
     "express-session": "^1.18.2",
     "pg": "^8.16.3",
     "@aws-sdk/client-s3": "^3.800.0",
-    "multer": "^2.0.2",
-    "archiver": "^7.0.1"
+    "multer": "^2.0.2"
   }
 }
