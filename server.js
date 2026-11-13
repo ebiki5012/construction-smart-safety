@@ -13,7 +13,7 @@ if(!DATABASE_URL){
   process.exit(1);
 }
 const pool=new Pool({connectionString:DATABASE_URL,ssl:process.env.NODE_ENV==="production"?{rejectUnauthorized:false}:false});
-
+app.use(express.json({limit:"10mb"}));
 app.use(express.json({limit:"10mb"}));
 app.use(express.urlencoded({extended:true}));
 app.use(session({
