@@ -99,6 +99,21 @@ async function init(){
  CREATE TABLE IF NOT EXISTS custom_records(id SERIAL PRIMARY KEY,form_id INT NOT NULL REFERENCES custom_forms(id),site_id INT NOT NULL REFERENCES sites(id),record_date DATE NOT NULL DEFAULT CURRENT_DATE,form_data JSONB NOT NULL DEFAULT '{}',created_by INT REFERENCES users(id),created_at TIMESTAMPTZ NOT NULL DEFAULT now());
  CREATE INDEX IF NOT EXISTS custom_records_site_date ON custom_records(site_id,record_date DESC);
  CREATE TABLE IF NOT EXISTS custom_record_photos(id SERIAL PRIMARY KEY,record_id INT NOT NULL REFERENCES custom_records(id) ON DELETE CASCADE,field_id INT NOT NULL REFERENCES custom_fields(id),object_key TEXT NOT NULL UNIQUE,original_name TEXT NOT NULL,mime_type TEXT NOT NULL,byte_size INT NOT NULL,created_at TIMESTAMPTZ NOT NULL DEFAULT now());`);
+  // Non-destructive upgrade: site branding, risk periods, edit history and soft deletion.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS company_preferences(id INT PRIMARY KEY DEFAULT 1 CHECK(id=1), company_name TEXT NOT NULL DEFAULT '스마트 안전관리', primary_color TEXT NOT NULL DEFAULT '#205cf5', logo_url TEXT NOT NULL DEFAULT '');
+    INSERT INTO company_preferences(id) VALUES(1) ON CONFLICT DO NOTHING;
+    CREATE TABLE IF NOT EXISTS site_preferences(site_id INT PRIMARY KEY REFERENCES sites(id) ON DELETE CASCADE, company_name TEXT, primary_color TEXT, logo_url TEXT, menu_visibility JSONB NOT NULL DEFAULT '{}');
+    CREATE TABLE IF NOT EXISTS record_audit(id BIGSERIAL PRIMARY KEY, record_type TEXT NOT NULL, record_id INT NOT NULL, site_id INT NOT NULL, actor_id INT REFERENCES users(id), action TEXT NOT NULL, before_data JSONB, after_data JSONB, created_at TIMESTAMPTZ NOT NULL DEFAULT now());
+    CREATE INDEX IF NOT EXISTS record_audit_site_time ON record_audit(site_id,created_at DESC);
+    ALTER TABLE risks ADD COLUMN IF NOT EXISTS period_start DATE;
+    ALTER TABLE risks ADD COLUMN IF NOT EXISTS period_end DATE;
+    ALTER TABLE risks ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+    ALTER TABLE tbms ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+    ALTER TABLE actions ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+    ALTER TABLE custom_records ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+    CREATE TABLE IF NOT EXISTS custom_form_sites(form_id INT NOT NULL REFERENCES custom_forms(id) ON DELETE CASCADE, site_id INT NOT NULL REFERENCES sites(id) ON DELETE CASCADE, visible BOOLEAN NOT NULL DEFAULT TRUE, PRIMARY KEY(form_id,site_id));
+  `);
  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS session_version INTEGER NOT NULL DEFAULT 0");
  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT");
  await pool.query("CREATE UNIQUE INDEX IF NOT EXISTS users_username_lower_unique ON users (lower(username)) WHERE username IS NOT NULL");
@@ -160,10 +175,10 @@ app.get("/api/sites",auth,async(req,res)=>{
 app.get("/api/dashboard",auth,async(req,res)=>{
  const sid=Number(req.query.site_id);if(!(await can(req,sid)))return res.status(403).json({error:"현장 권한이 없습니다."});
  const [a,b,c,d]=await Promise.all([
-   one("SELECT count(*)::int n FROM risks WHERE site_id=$1",[sid]),
-   one("SELECT count(*)::int n FROM risks WHERE site_id=$1 AND level='높음'",[sid]),
-   one("SELECT count(*)::int n FROM actions WHERE site_id=$1 AND status<>'DONE'",[sid]),
-   one("SELECT count(*)::int n FROM tbms WHERE site_id=$1 AND tbm_date=CURRENT_DATE",[sid])
+   one("SELECT count(*)::int n FROM risks WHERE deleted_at IS NULL AND site_id=$1",[sid]),
+   one("SELECT count(*)::int n FROM risks WHERE deleted_at IS NULL AND site_id=$1 AND level='높음'",[sid]),
+   one("SELECT count(*)::int n FROM actions WHERE deleted_at IS NULL AND site_id=$1 AND status<>'DONE'",[sid]),
+   one("SELECT count(*)::int n FROM tbms WHERE deleted_at IS NULL AND site_id=$1 AND tbm_date=CURRENT_DATE",[sid])
  ]);
  res.json({riskCount:a.n,highRiskCount:b.n,actionOpen:c.n,todayTbm:d.n});
 });
@@ -174,10 +189,10 @@ app.get("/api/overview",auth,async(req,res,next)=>{
   const u=await user(req);
   if(u.role!=="ADMIN")return res.status(403).json({error:"최고관리자만 전체 현황을 볼 수 있습니다."});
   const rows=await q(`SELECT s.id,s.name,s.status,
-   (SELECT count(*)::int FROM risks r WHERE r.site_id=s.id) risk_count,
-   (SELECT count(*)::int FROM risks r WHERE r.site_id=s.id AND r.level='높음') high_count,
-   (SELECT count(*)::int FROM actions a WHERE a.site_id=s.id AND a.status<>'DONE') open_count,
-   (SELECT count(*)::int FROM tbms t WHERE t.site_id=s.id AND t.tbm_date=CURRENT_DATE) today_tbm
+   (SELECT count(*)::int FROM risks r WHERE r.deleted_at IS NULL AND r.site_id=s.id) risk_count,
+   (SELECT count(*)::int FROM risks r WHERE r.deleted_at IS NULL AND r.site_id=s.id AND r.level='높음') high_count,
+   (SELECT count(*)::int FROM actions a WHERE a.deleted_at IS NULL AND a.site_id=s.id AND a.status<>'DONE') open_count,
+   (SELECT count(*)::int FROM tbms t WHERE t.deleted_at IS NULL AND t.site_id=s.id AND t.tbm_date=CURRENT_DATE) today_tbm
    FROM sites s ORDER BY s.id DESC`);
   res.json({sites:rows,totals:rows.reduce((a,r)=>({riskCount:a.riskCount+r.risk_count,highRiskCount:a.highRiskCount+r.high_count,actionOpen:a.actionOpen+r.open_count,todayTbm:a.todayTbm+r.today_tbm}),{riskCount:0,highRiskCount:0,actionOpen:0,todayTbm:0})});
  }catch(e){next(e)}
@@ -196,10 +211,10 @@ app.get("/api/history",auth,async(req,res,next)=>{
   const params=[siteId==="all"?null:Number(siteId),from||null,to||null,`%${keyword}%`];
   const sql=`SELECT * FROM (
    SELECT 'risk' kind,r.id,r.site_id,s.name site_name,r.risk_date record_date,r.work title,r.hazard detail,r.measure, r.area extra
-   FROM risks r JOIN sites s ON s.id=r.site_id
+   FROM risks r JOIN sites s ON s.id=r.site_id WHERE r.deleted_at IS NULL
    UNION ALL
    SELECT 'tbm' kind,t.id,t.site_id,s.name site_name,t.tbm_date record_date,t.work_name title,t.hazard detail,t.measure,t.team extra
-   FROM tbms t JOIN sites s ON s.id=t.site_id
+   FROM tbms t JOIN sites s ON s.id=t.site_id WHERE t.deleted_at IS NULL
   ) h WHERE ($1::int IS NULL OR h.site_id=$1) AND ($2::date IS NULL OR h.record_date >= $2::date)
    AND ($3::date IS NULL OR h.record_date <= $3::date)
    AND (h.title ILIKE $4 OR h.detail ILIKE $4 OR h.extra ILIKE $4 OR h.site_name ILIKE $4)
@@ -225,15 +240,16 @@ app.put("/api/settings",auth,async(req,res)=>{
 
 app.get("/api/risks",auth,async(req,res)=>{
  const sid=Number(req.query.site_id);if(!(await can(req,sid)))return res.status(403).json({error:"현장 권한이 없습니다."});
- res.json(await q("SELECT r.*,u.name author_name FROM risks r LEFT JOIN users u ON u.id=r.author_id WHERE r.site_id=$1 ORDER BY r.id DESC",[sid]));
+ res.json(await q("SELECT r.*,u.name author_name FROM risks r LEFT JOIN users u ON u.id=r.author_id WHERE r.site_id=$1 AND r.deleted_at IS NULL ORDER BY r.id DESC",[sid]));
 });
 app.post("/api/risks",auth,async(req,res)=>{
  const sid=Number(req.body.site_id);if(!(await can(req,sid)))return res.status(403).json({error:"현장 권한이 없습니다."});
+ if(req.body.period_start&&req.body.period_end&&req.body.period_start>req.body.period_end)return res.status(400).json({error:"적용 시작일이 종료일보다 늦습니다."});
  const s=await one("SELECT * FROM settings WHERE site_id=$1",[sid])||{low_max:3,medium_max:5};
  const r=riskCalc(req.body.frequency,req.body.severity,s),u=await user(req);
- const x=await one(`INSERT INTO risks(site_id,risk_date,area,work,hazard,frequency,severity,score,level,measure,author_id)
- VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
- [sid,req.body.date||null,req.body.area,req.body.work,req.body.hazard,r.frequency,r.severity,r.score,r.level,req.body.measure,u.id]);
+ const x=await one(`INSERT INTO risks(site_id,risk_date,area,work,hazard,frequency,severity,score,level,measure,author_id,period_start,period_end)
+ VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
+ [sid,req.body.date||null,req.body.area,req.body.work,req.body.hazard,r.frequency,r.severity,r.score,r.level,req.body.measure,u.id,req.body.period_start||null,req.body.period_end||null]);
  res.json(x);
 });
 
@@ -295,12 +311,15 @@ app.get("/api/photo-library",auth,async(req,res,next)=>{try{
  if(from){params.push(from);where+=` AND p.created_at::date >= $${params.length}::date`}
  if(to){params.push(to);where+=` AND p.created_at::date <= $${params.length}::date`}
  if(type!=="all"){if(!["risk","tbm","action","custom"].includes(type))return res.status(400).json({error:"사진 유형 오류"});if(type!=="custom"){params.push(type);where+=` AND p.record_type=$${params.length}`}}
- const regular=type==="custom"?[]:await q(`SELECT p.id,p.record_type,p.record_id,p.original_name,p.mime_type,p.byte_size,p.created_at,p.photo_stage,s.name site_name,p.site_id FROM record_photos p JOIN sites s ON s.id=p.site_id ${where} ORDER BY p.created_at DESC,p.id DESC LIMIT 500`,params);
+ const regular=type==="custom"?[]:await q(`SELECT p.id,p.record_type,p.record_id,p.original_name,p.mime_type,p.byte_size,p.created_at,p.photo_stage,s.name site_name,p.site_id,u.name uploader_name,
+ CASE p.record_type WHEN 'risk' THEN (SELECT r.work FROM risks r WHERE r.id=p.record_id) WHEN 'tbm' THEN (SELECT t.work_name FROM tbms t WHERE t.id=p.record_id) ELSE (SELECT a.item FROM actions a WHERE a.id=p.record_id) END source_title,
+ CASE p.record_type WHEN 'risk' THEN (SELECT r.risk_date FROM risks r WHERE r.id=p.record_id) WHEN 'tbm' THEN (SELECT t.tbm_date FROM tbms t WHERE t.id=p.record_id) ELSE (SELECT a.due_date FROM actions a WHERE a.id=p.record_id) END source_date
+ FROM record_photos p JOIN sites s ON s.id=p.site_id LEFT JOIN users u ON u.id=p.uploaded_by ${where} ORDER BY p.created_at DESC,p.id DESC LIMIT 500`,params);
  const customParams=[];let cw="WHERE 1=1";
  if(!all){customParams.push(sid);cw+=` AND r.site_id=$${customParams.length}`}
  if(from){customParams.push(from);cw+=` AND p.created_at::date >= $${customParams.length}::date`}
  if(to){customParams.push(to);cw+=` AND p.created_at::date <= $${customParams.length}::date`}
- const custom=type!=="all"&&type!=="custom"?[]:await q(`SELECT p.id,'custom' record_type,r.id record_id,p.original_name,p.mime_type,p.byte_size,p.created_at,'general' photo_stage,s.name site_name,r.site_id FROM custom_record_photos p JOIN custom_records r ON r.id=p.record_id JOIN sites s ON s.id=r.site_id ${cw} ORDER BY p.created_at DESC,p.id DESC LIMIT 500`,customParams);
+ const custom=type!=="all"&&type!=="custom"?[]:await q(`SELECT p.id,'custom' record_type,r.id record_id,p.original_name,p.mime_type,p.byte_size,p.created_at,'general' photo_stage,s.name site_name,r.site_id, u.name uploader_name, f.title source_title,r.record_date source_date FROM custom_record_photos p JOIN custom_records r ON r.id=p.record_id JOIN sites s ON s.id=r.site_id LEFT JOIN users u ON u.id=r.created_by LEFT JOIN custom_forms f ON f.id=r.form_id ${cw} ORDER BY p.created_at DESC,p.id DESC LIMIT 500`,customParams);
  res.json([...regular,...custom].sort((a,b)=>new Date(b.created_at)-new Date(a.created_at)).slice(0,500));
 }catch(e){next(e)}});
 // Storage totals are computed from photo metadata; this is not an R2 billing meter.
@@ -366,7 +385,7 @@ app.post("/api/templates",auth,async(req,res)=>{
 
 app.get("/api/actions",auth,async(req,res)=>{
  const sid=Number(req.query.site_id);if(!(await can(req,sid)))return res.status(403).json({error:"현장 권한이 없습니다."});
- res.json(await q("SELECT * FROM actions WHERE site_id=$1 ORDER BY due_date NULLS LAST,id DESC",[sid]));
+ res.json(await q("SELECT * FROM actions WHERE deleted_at IS NULL AND site_id=$1 ORDER BY due_date NULLS LAST,id DESC",[sid]));
 });
 app.post("/api/actions",auth,async(req,res)=>{
  const sid=Number(req.body.site_id);if(!(await can(req,sid)))return res.status(403).json({error:"현장 권한이 없습니다."});
@@ -382,7 +401,7 @@ app.patch("/api/actions/:id",auth,async(req,res)=>{
 
 app.get("/api/tbms",auth,async(req,res)=>{
  const sid=Number(req.query.site_id);if(!(await can(req,sid)))return res.status(403).json({error:"현장 권한이 없습니다."});
- res.json(await q("SELECT t.*,r.work risk_work FROM tbms t LEFT JOIN risks r ON r.id=t.risk_id WHERE t.site_id=$1 ORDER BY t.id DESC",[sid]));
+ res.json(await q("SELECT t.*,r.work risk_work FROM tbms t LEFT JOIN risks r ON r.id=t.risk_id WHERE t.site_id=$1 AND t.deleted_at IS NULL ORDER BY t.id DESC",[sid]));
 });
 app.post("/api/tbms",auth,async(req,res)=>{
  const sid=Number(req.body.site_id);if(!(await can(req,sid)))return res.status(403).json({error:"현장 권한이 없습니다."});
@@ -500,7 +519,7 @@ app.delete("/api/users/:id/sites/:siteId",auth,async(req,res)=>{
 app.get("/api/custom/forms",auth,async(req,res,next)=>{try{
  const forms=await q("SELECT * FROM custom_forms ORDER BY sort_order,id");
  const fields=await q("SELECT * FROM custom_fields ORDER BY sort_order,id");
- const admin=(await user(req)).role==="ADMIN";res.json(forms.filter(f=>f.active||admin).map(f=>({...f,fields:fields.filter(x=>x.form_id===f.id)})));
+ const admin=(await user(req)).role==="ADMIN";const sid=Number(req.query.site_id);const visibility=Number.isSafeInteger(sid)&&sid>0?await q("SELECT form_id,visible FROM custom_form_sites WHERE site_id=$1",[sid]):[];const overrides=new Map(visibility.map(x=>[x.form_id,x.visible]));res.json(forms.filter(f=>admin||(f.active&&overrides.get(f.id)!==false)).map(f=>({...f,site_visible:overrides.get(f.id)!==false,fields:fields.filter(x=>x.form_id===f.id)})));
 }catch(e){next(e)}});
 app.post("/api/custom/forms",auth,async(req,res,next)=>{try{
  if((await user(req)).role!=="ADMIN")return res.status(403).json({error:"최고관리자만 변경할 수 있습니다."});
@@ -529,12 +548,12 @@ app.patch("/api/custom/fields/:id",auth,async(req,res,next)=>{try{
 app.get("/api/custom/records",auth,async(req,res,next)=>{try{
  const fid=Number(req.query.form_id),sid=Number(req.query.site_id);
  if(!(await can(req,sid)))return res.status(403).json({error:"현장 권한이 없습니다."});
- res.json(await q("SELECT r.*,u.name author FROM custom_records r LEFT JOIN users u ON u.id=r.created_by WHERE r.form_id=$1 AND r.site_id=$2 ORDER BY r.record_date DESC,r.id DESC LIMIT 500",[fid,sid]));
+ res.json(await q("SELECT r.*,u.name author FROM custom_records r LEFT JOIN users u ON u.id=r.created_by WHERE r.form_id=$1 AND r.site_id=$2 AND r.deleted_at IS NULL ORDER BY r.record_date DESC,r.id DESC LIMIT 500",[fid,sid]));
 }catch(e){next(e)}});
 app.post("/api/custom/records",auth,async(req,res,next)=>{try{
  const fid=Number(req.body.form_id),sid=Number(req.body.site_id);
  if(!(await can(req,sid)))return res.status(403).json({error:"현장 권한이 없습니다."});
- const form=await one("SELECT * FROM custom_forms WHERE id=$1 AND active=true",[fid]);if(!form)return res.status(404).json({error:"메뉴를 찾을 수 없습니다."});
+ const form=await one("SELECT * FROM custom_forms WHERE id=$1 AND active=true",[fid]);if(!form)return res.status(404).json({error:"메뉴를 찾을 수 없습니다."});const visibility=await one("SELECT visible FROM custom_form_sites WHERE form_id=$1 AND site_id=$2",[fid,sid]);if(visibility?.visible===false)return res.status(403).json({error:"이 현장에서 숨김 처리된 양식입니다."});
  const fields=await q("SELECT * FROM custom_fields WHERE form_id=$1 AND active=true",[fid]);const incoming=req.body.values||{},values={};
  for(const f of fields){if(f.field_type==="photo")continue;const v=String(incoming[f.id]??"").slice(0,5000);if(f.required&&!v.trim())return res.status(400).json({error:`${f.label}: 필수 입력 항목입니다.`});if(f.field_type==="select"&&v&&!f.options.includes(v))return res.status(400).json({error:`${f.label}: 선택값 오류`});values[f.id]=v}
  res.json(await one("INSERT INTO custom_records(form_id,site_id,record_date,form_data,created_by) VALUES($1,$2,$3,$4,$5) RETURNING *",[fid,sid,req.body.record_date||new Date().toISOString().slice(0,10),JSON.stringify(values),req.session.userId]));
@@ -562,5 +581,55 @@ app.get("/api/custom/photos/:id/:mode",auth,async(req,res,next)=>{try{
  const obj=await r2().send(new GetObjectCommand({Bucket:bucket(),Key:f.object_key}));
  res.set({"Content-Type":f.mime_type,"Cache-Control":"private, no-store","X-Content-Type-Options":"nosniff","Content-Disposition":req.params.mode==="download"?`attachment; filename="photo"; filename*=UTF-8''${encodeURIComponent(f.original_name)}`:"inline"});obj.Body.pipe(res);
 }catch(e){next(e)}});
+// Company-wide defaults and per-site overrides (admin only writes).
+const validHex=x=>/^#[0-9a-fA-F]{6}$/.test(String(x||""));
+const MENU_IDS=["dashboard","risk","template","tbm","action","history","library"];
+app.get("/api/appearance",auth,async(req,res,next)=>{try{
+ const sid=Number(req.query.site_id),u=await user(req);
+ if(req.query.site_id!=="all"&&!(await can(req,sid)))return res.status(403).json({error:"현장 권한이 없습니다."});
+ if(req.query.site_id==="all"&&u.role!=="ADMIN")return res.status(403).json({error:"권한이 없습니다."});
+ const global=await one("SELECT * FROM company_preferences WHERE id=1");
+ const local=req.query.site_id==="all"?null:await one("SELECT * FROM site_preferences WHERE site_id=$1",[sid]);
+ res.json({company_name:local?.company_name||global.company_name,primary_color:local?.primary_color||global.primary_color,logo_url:local?.logo_url||global.logo_url,menu_visibility:local?.menu_visibility||{},global,local});
+}catch(e){next(e)}});
+app.put("/api/appearance",auth,async(req,res,next)=>{try{
+ if(!(await adminOnly(req,res)))return;
+ const scope=String(req.body.scope||"site"),name=String(req.body.company_name||"").trim().slice(0,100),color=String(req.body.primary_color||""),logo=String(req.body.logo_url||"").trim().slice(0,500);
+ if(!name||!validHex(color)||logo&&!/^https:\/\//.test(logo))return res.status(400).json({error:"회사명·색상 또는 HTTPS 로고 주소를 확인하세요."});
+ if(scope==="company")await pool.query("UPDATE company_preferences SET company_name=$1,primary_color=$2,logo_url=$3 WHERE id=1",[name,color,logo]);
+ else{
+  const sid=Number(req.body.site_id),site=await one("SELECT id FROM sites WHERE id=$1",[sid]);if(!site)return res.status(404).json({error:"현장이 없습니다."});
+  const menu=req.body.menu_visibility||{};if(typeof menu!=="object"||Array.isArray(menu)||Object.keys(menu).some(k=>!MENU_IDS.includes(k)||typeof menu[k]!=="boolean"))return res.status(400).json({error:"메뉴 설정이 올바르지 않습니다."});
+  await pool.query(`INSERT INTO site_preferences(site_id,company_name,primary_color,logo_url,menu_visibility) VALUES($1,$2,$3,$4,$5)
+  ON CONFLICT(site_id) DO UPDATE SET company_name=EXCLUDED.company_name,primary_color=EXCLUDED.primary_color,logo_url=EXCLUDED.logo_url,menu_visibility=EXCLUDED.menu_visibility`,[sid,name,color,logo,JSON.stringify(menu)]);
+ }
+ res.json({ok:true});
+}catch(e){next(e)}});
+app.delete("/api/appearance/:siteId",auth,async(req,res,next)=>{try{if(!(await adminOnly(req,res)))return;await pool.query("DELETE FROM site_preferences WHERE site_id=$1",[req.params.siteId]);res.json({ok:true})}catch(e){next(e)}});
+const EDIT_TABLE={risk:"risks",tbm:"tbms",action:"actions",custom:"custom_records"};
+app.patch("/api/records/:type/:id",auth,async(req,res,next)=>{try{
+ const type=req.params.type,table=EDIT_TABLE[type];if(!table)return res.status(400).json({error:"기록 종류 오류"});
+ const record=await one(`SELECT * FROM ${table} WHERE id=$1 AND deleted_at IS NULL`,[req.params.id]);if(!record)return res.status(404).json({error:"기록이 없습니다."});
+ const u=await user(req);if(u.role!=="ADMIN")return res.status(403).json({error:"최고관리자만 기존 기록을 수정할 수 있습니다."});
+ const allowed={risk:["risk_date","period_start","period_end","area","work","hazard","frequency","severity","measure"],tbm:["tbm_date","team","work_name","people","hazard","measure"],action:["item","manager","due_date","status"],custom:["record_date","form_data"]}[type];
+ const fields=Object.keys(req.body).filter(k=>allowed.includes(k));if(!fields.length)return res.status(400).json({error:"수정할 내용이 없습니다."});
+ const nextRow={...record};for(const k of fields)nextRow[k]=req.body[k]??null;
+ if(type==="risk"){
+  if(nextRow.period_start&&nextRow.period_end&&String(nextRow.period_start).slice(0,10)>String(nextRow.period_end).slice(0,10))return res.status(400).json({error:"적용 기간을 확인하세요."});
+  if(fields.includes("frequency")||fields.includes("severity")){const settings=await one("SELECT * FROM settings WHERE site_id=$1",[record.site_id])||{low_max:3,medium_max:5};const f=Number(nextRow.frequency),v=Number(nextRow.severity);if(![1,2,3].includes(f)||![1,2,3].includes(v))return res.status(400).json({error:"빈도와 강도는 1~3이어야 합니다."});Object.assign(nextRow,riskCalc(f,v,settings));fields.push("score","level")}
+ }
+ if(type==="tbm"&&fields.includes("people")&&(!Number.isInteger(Number(nextRow.people))||Number(nextRow.people)<0))return res.status(400).json({error:"인원수를 확인하세요."});
+ if(type==="action"&&fields.includes("status")&&!['OPEN','DONE'].includes(nextRow.status))return res.status(400).json({error:"상태 오류"});
+ if(type==="custom"&&fields.includes("form_data")&&(typeof nextRow.form_data!=="object"||!nextRow.form_data||Array.isArray(nextRow.form_data)))return res.status(400).json({error:"양식 내용 오류"});
+ const vals=fields.map(k=>nextRow[k]);const sets=fields.map((k,i)=>`${k}=$${i+1}`).join(",");
+ const client=await pool.connect();try{await client.query("BEGIN");const updated=(await client.query(`UPDATE ${table} SET ${sets} WHERE id=$${fields.length+1} RETURNING *`,[...vals,record.id])).rows[0];await client.query("INSERT INTO record_audit(record_type,record_id,site_id,actor_id,action,before_data,after_data) VALUES($1,$2,$3,$4,'UPDATE',$5,$6)",[type,record.id,record.site_id,u.id,JSON.stringify(record),JSON.stringify(updated)]);await client.query("COMMIT");res.json(updated)}catch(e){await client.query("ROLLBACK");throw e}finally{client.release()}
+}catch(e){next(e)}});
+app.delete("/api/records/:type/:id",auth,async(req,res,next)=>{try{
+ const type=req.params.type,table=EDIT_TABLE[type];if(!table)return res.status(400).json({error:"종류 오류"});if(!(await adminOnly(req,res)))return;
+ const record=await one(`SELECT * FROM ${table} WHERE id=$1 AND deleted_at IS NULL`,[req.params.id]);if(!record)return res.status(404).json({error:"기록이 없습니다."});
+ const client=await pool.connect();try{await client.query("BEGIN");await client.query(`UPDATE ${table} SET deleted_at=now() WHERE id=$1`,[record.id]);await client.query("INSERT INTO record_audit(record_type,record_id,site_id,actor_id,action,before_data) VALUES($1,$2,$3,$4,'DELETE',$5)",[type,record.id,record.site_id,req.session.userId,JSON.stringify(record)]);await client.query("COMMIT");res.json({ok:true})}catch(e){await client.query("ROLLBACK");throw e}finally{client.release()}
+}catch(e){next(e)}});
+app.get("/api/audit",auth,async(req,res,next)=>{try{if(!(await adminOnly(req,res)))return;const sid=Number(req.query.site_id);if(!Number.isSafeInteger(sid)||sid<1)return res.status(400).json({error:"현장을 선택하세요."});res.json(await q("SELECT a.id,a.record_type,a.record_id,a.action,a.created_at,u.name actor FROM record_audit a LEFT JOIN users u ON u.id=a.actor_id WHERE a.site_id=$1 ORDER BY a.id DESC LIMIT 200",[sid]))}catch(e){next(e)}});
+app.put("/api/custom/forms/:id/site-visibility",auth,async(req,res,next)=>{try{if(!(await adminOnly(req,res)))return;const sid=Number(req.body.site_id);if(typeof req.body.visible!=="boolean"||!await one("SELECT id FROM sites WHERE id=$1",[sid]))return res.status(400).json({error:"현장 또는 표시 설정 오류"});await pool.query("INSERT INTO custom_form_sites(form_id,site_id,visible) VALUES($1,$2,$3) ON CONFLICT(form_id,site_id) DO UPDATE SET visible=EXCLUDED.visible",[req.params.id,sid,req.body.visible]);res.json({ok:true})}catch(e){next(e)}});
 app.use((req,res)=>{if(req.method==="GET")res.sendFile(path.join(__dirname,"public","index.html"));else res.status(404).json({error:"요청을 찾을 수 없습니다."})});
 init().then(()=>app.listen(PORT,"0.0.0.0",()=>console.log(`Safety app running on ${PORT}`))).catch(e=>{console.error(e);process.exit(1)});
