@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: construction-smart-safety
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: construction-safety-db
+          property: connectionString
+      - key: SESSION_SECRET
+        generateValue: true
+
+databases:
+  - name: construction-safety-db
+    plan: free
+    databaseName: safety
+    user: safety

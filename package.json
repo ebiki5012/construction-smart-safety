@@ -1,0 +1,15 @@
+{
+  "name": "construction-smart-safety-shared",
+  "version": "2.0.0",
+  "private": true,
+  "description": "현장별 공유형 건설 안전관리 웹앱",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "connect-pg-simple": "^10.0.0",
+    "express": "^5.1.0",
+    "express-session": "^1.18.2",
+    "pg": "^8.16.3"
+  }
+}
