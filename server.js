@@ -114,6 +114,11 @@ async function init(){
     ALTER TABLE custom_records ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
     CREATE TABLE IF NOT EXISTS custom_form_sites(form_id INT NOT NULL REFERENCES custom_forms(id) ON DELETE CASCADE, site_id INT NOT NULL REFERENCES sites(id) ON DELETE CASCADE, visible BOOLEAN NOT NULL DEFAULT TRUE, PRIMARY KEY(form_id,site_id));
   `);
+ await pool.query(`
+ CREATE TABLE IF NOT EXISTS admin_announcements(id SERIAL PRIMARY KEY,site_id INT REFERENCES sites(id) ON DELETE CASCADE,title TEXT NOT NULL,body TEXT NOT NULL,active BOOLEAN NOT NULL DEFAULT TRUE,created_by INT REFERENCES users(id),created_at TIMESTAMPTZ NOT NULL DEFAULT now());
+ CREATE TABLE IF NOT EXISTS record_approvals(id BIGSERIAL PRIMARY KEY,record_type TEXT NOT NULL,record_id INT NOT NULL,site_id INT NOT NULL REFERENCES sites(id),status TEXT NOT NULL DEFAULT 'DRAFT' CHECK(status IN ('DRAFT','SUBMITTED','APPROVED','REJECTED')),reviewer_id INT REFERENCES users(id),comment TEXT NOT NULL DEFAULT '',updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),UNIQUE(record_type,record_id));
+ CREATE TABLE IF NOT EXISTS admin_events(id BIGSERIAL PRIMARY KEY,actor_id INT REFERENCES users(id),category TEXT NOT NULL,action TEXT NOT NULL,object_id TEXT,details JSONB,created_at TIMESTAMPTZ NOT NULL DEFAULT now());
+ `);
  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS session_version INTEGER NOT NULL DEFAULT 0");
  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT");
  await pool.query("CREATE UNIQUE INDEX IF NOT EXISTS users_username_lower_unique ON users (lower(username)) WHERE username IS NOT NULL");
@@ -611,6 +616,8 @@ app.patch("/api/records/:type/:id",auth,async(req,res,next)=>{try{
  const type=req.params.type,table=EDIT_TABLE[type];if(!table)return res.status(400).json({error:"기록 종류 오류"});
  const record=await one(`SELECT * FROM ${table} WHERE id=$1 AND deleted_at IS NULL`,[req.params.id]);if(!record)return res.status(404).json({error:"기록이 없습니다."});
  const u=await user(req);if(u.role!=="ADMIN")return res.status(403).json({error:"최고관리자만 기존 기록을 수정할 수 있습니다."});
+ const approval=await one("SELECT status FROM record_approvals WHERE record_type=$1 AND record_id=$2",[type,record.id]);
+ if(approval?.status==='APPROVED')return res.status(409).json({error:'승인 완료된 기록입니다. 변경하려면 별도 승인 취소 절차가 필요합니다.'});
  const allowed={risk:["risk_date","period_start","period_end","area","work","hazard","frequency","severity","measure"],tbm:["tbm_date","team","work_name","people","hazard","measure"],action:["item","manager","due_date","status"],custom:["record_date","form_data"]}[type];
  const fields=Object.keys(req.body).filter(k=>allowed.includes(k));if(!fields.length)return res.status(400).json({error:"수정할 내용이 없습니다."});
  const nextRow={...record};for(const k of fields)nextRow[k]=req.body[k]??null;
@@ -631,5 +638,88 @@ app.delete("/api/records/:type/:id",auth,async(req,res,next)=>{try{
 }catch(e){next(e)}});
 app.get("/api/audit",auth,async(req,res,next)=>{try{if(!(await adminOnly(req,res)))return;const sid=Number(req.query.site_id);if(!Number.isSafeInteger(sid)||sid<1)return res.status(400).json({error:"현장을 선택하세요."});res.json(await q("SELECT a.id,a.record_type,a.record_id,a.action,a.created_at,u.name actor FROM record_audit a LEFT JOIN users u ON u.id=a.actor_id WHERE a.site_id=$1 ORDER BY a.id DESC LIMIT 200",[sid]))}catch(e){next(e)}});
 app.put("/api/custom/forms/:id/site-visibility",auth,async(req,res,next)=>{try{if(!(await adminOnly(req,res)))return;const sid=Number(req.body.site_id);if(typeof req.body.visible!=="boolean"||!await one("SELECT id FROM sites WHERE id=$1",[sid]))return res.status(400).json({error:"현장 또는 표시 설정 오류"});await pool.query("INSERT INTO custom_form_sites(form_id,site_id,visible) VALUES($1,$2,$3) ON CONFLICT(form_id,site_id) DO UPDATE SET visible=EXCLUDED.visible",[req.params.id,sid,req.body.visible]);res.json({ok:true})}catch(e){next(e)}});
+
+// Admin Center V2: configurable forms, approval, trash, announcements, audit and export.
+const logAdmin=async(req,category,action,id,details={})=>pool.query("INSERT INTO admin_events(actor_id,category,action,object_id,details) VALUES($1,$2,$3,$4,$5)",[req.session.userId,category,action,String(id||''),JSON.stringify(details)]);
+app.post('/api/admin/forms/:id/duplicate',auth,async(req,res,next)=>{try{
+ if(!(await adminOnly(req,res)))return;
+ const src=await one('SELECT * FROM custom_forms WHERE id=$1',[req.params.id]);if(!src)return res.status(404).json({error:'양식을 찾을 수 없습니다.'});
+ const client=await pool.connect();try{await client.query('BEGIN');
+ const form=(await client.query('INSERT INTO custom_forms(title,description,icon,active,sort_order) VALUES($1,$2,$3,true,$4) RETURNING *',[src.title+' (복사본)',src.description,src.icon,src.sort_order+1])).rows[0];
+ await client.query('INSERT INTO custom_fields(form_id,label,field_type,options,required,active,sort_order) SELECT $1,label,field_type,options,required,active,sort_order FROM custom_fields WHERE form_id=$2',[form.id,src.id]);
+ await client.query('COMMIT');await logAdmin(req,'form','DUPLICATE',form.id,{source:src.id});res.json(form);
+ }catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}
+}catch(e){next(e)}});
+app.delete('/api/admin/forms/:id',auth,async(req,res,next)=>{try{
+ if(!(await adminOnly(req,res)))return;
+ const form=await one('UPDATE custom_forms SET active=false WHERE id=$1 RETURNING *',[req.params.id]);if(!form)return res.status(404).json({error:'양식이 없습니다.'});
+ await logAdmin(req,'form','ARCHIVE',form.id);res.json({ok:true,note:'기존 기록 보존을 위해 보관 처리했습니다.'});
+}catch(e){next(e)}});
+app.delete('/api/admin/fields/:id',auth,async(req,res,next)=>{try{
+ if(!(await adminOnly(req,res)))return;
+ const field=await one('UPDATE custom_fields SET active=false WHERE id=$1 RETURNING *',[req.params.id]);if(!field)return res.status(404).json({error:'항목이 없습니다.'});
+ await logAdmin(req,'field','ARCHIVE',field.id,{form_id:field.form_id});res.json({ok:true});
+}catch(e){next(e)}});
+app.get('/api/admin/trash',auth,async(req,res,next)=>{try{
+ if(!(await adminOnly(req,res)))return;const sid=Number(req.query.site_id);
+ if(!Number.isSafeInteger(sid)||sid<1)return res.status(400).json({error:'현장을 선택하세요.'});
+ const rows=[];for(const [type,table] of Object.entries(EDIT_TABLE)){
+  const records=await q(`SELECT id,site_id,deleted_at FROM ${table} WHERE site_id=$1 AND deleted_at IS NOT NULL ORDER BY deleted_at DESC LIMIT 100`,[sid]);
+  records.forEach(r=>rows.push({...r,type}));
+ }res.json(rows.sort((a,b)=>new Date(b.deleted_at)-new Date(a.deleted_at)).slice(0,200));
+}catch(e){next(e)}});
+app.post('/api/admin/trash/:type/:id/restore',auth,async(req,res,next)=>{try{
+ if(!(await adminOnly(req,res)))return;const type=req.params.type,table=EDIT_TABLE[type];if(!table)return res.status(400).json({error:'기록 종류 오류'});
+ const client=await pool.connect();try{await client.query('BEGIN');
+ const record=(await client.query(`UPDATE ${table} SET deleted_at=NULL WHERE id=$1 AND deleted_at IS NOT NULL RETURNING *`,[req.params.id])).rows[0];
+ if(!record){await client.query('ROLLBACK');return res.status(404).json({error:'휴지통에 기록이 없습니다.'})}
+ await client.query("INSERT INTO record_audit(record_type,record_id,site_id,actor_id,action,after_data) VALUES($1,$2,$3,$4,'RESTORE',$5)",[type,record.id,record.site_id,req.session.userId,JSON.stringify(record)]);
+ await client.query('COMMIT');res.json({ok:true});
+ }catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}
+}catch(e){next(e)}});
+app.get('/api/admin/approvals',auth,async(req,res,next)=>{try{
+ const sid=Number(req.query.site_id);if(!(await can(req,sid)))return res.status(403).json({error:'현장 권한이 없습니다.'});
+ res.json(await q('SELECT a.*,u.name reviewer FROM record_approvals a LEFT JOIN users u ON u.id=a.reviewer_id WHERE a.site_id=$1 ORDER BY a.updated_at DESC LIMIT 300',[sid]));
+}catch(e){next(e)}});
+app.put('/api/admin/approvals/:type/:id',auth,async(req,res,next)=>{try{
+ const type=req.params.type,table=EDIT_TABLE[type],status=String(req.body.status||'');
+ if(!table||!['SUBMITTED','APPROVED','REJECTED'].includes(status))return res.status(400).json({error:'요청 오류'});
+ const record=await one(`SELECT id,site_id FROM ${table} WHERE id=$1 AND deleted_at IS NULL`,[req.params.id]);if(!record)return res.status(404).json({error:'기록이 없습니다.'});
+ const u=await user(req);if(!(await can(req,record.site_id)))return res.status(403).json({error:'현장 권한이 없습니다.'});
+ if(status!=='SUBMITTED'&&u.role!=='ADMIN'&&!(await can(req,record.site_id,['MANAGER'])))return res.status(403).json({error:'승인 권한이 없습니다.'});
+ const previous=await one('SELECT * FROM record_approvals WHERE record_type=$1 AND record_id=$2',[type,record.id]);
+ if(status==='SUBMITTED'&&previous?.status==='APPROVED')return res.status(409).json({error:'승인된 기록은 재상신할 수 없습니다.'});
+ const comment=String(req.body.comment||'').slice(0,1000);
+ const result=await one(`INSERT INTO record_approvals(record_type,record_id,site_id,status,reviewer_id,comment) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(record_type,record_id) DO UPDATE SET status=EXCLUDED.status,reviewer_id=EXCLUDED.reviewer_id,comment=EXCLUDED.comment,updated_at=now() RETURNING *`,[type,record.id,record.site_id,status,status==='SUBMITTED'?null:u.id,comment]);
+ await logAdmin(req,'approval',status,record.id,{type,site_id:record.site_id,comment});res.json(result);
+}catch(e){next(e)}});
+app.get('/api/admin/announcements',auth,async(req,res,next)=>{try{
+ const sid=Number(req.query.site_id),u=await user(req);if(!(await can(req,sid)))return res.status(403).json({error:'현장 권한이 없습니다.'});
+ res.json(await q('SELECT * FROM admin_announcements WHERE (site_id=$1 OR site_id IS NULL) AND (active=true OR $2) ORDER BY id DESC LIMIT 100',[sid,u.role==='ADMIN']));
+}catch(e){next(e)}});
+app.post('/api/admin/announcements',auth,async(req,res,next)=>{try{
+ if(!(await adminOnly(req,res)))return;const title=String(req.body.title||'').trim().slice(0,150),body=String(req.body.body||'').trim().slice(0,5000),sid=req.body.site_id==null?null:Number(req.body.site_id);
+ if(!title||!body||sid!==null&&!await one('SELECT id FROM sites WHERE id=$1',[sid]))return res.status(400).json({error:'공지 내용 또는 현장을 확인하세요.'});
+ const row=await one('INSERT INTO admin_announcements(site_id,title,body,created_by) VALUES($1,$2,$3,$4) RETURNING *',[sid,title,body,req.session.userId]);await logAdmin(req,'announcement','CREATE',row.id);res.json(row);
+}catch(e){next(e)}});
+app.patch('/api/admin/announcements/:id',auth,async(req,res,next)=>{try{
+ if(!(await adminOnly(req,res)))return;const old=await one('SELECT * FROM admin_announcements WHERE id=$1',[req.params.id]);if(!old)return res.status(404).json({error:'공지가 없습니다.'});
+ const title=String(req.body.title??old.title).trim().slice(0,150),body=String(req.body.body??old.body).trim().slice(0,5000);if(!title||!body)return res.status(400).json({error:'제목과 내용을 입력하세요.'});
+ const row=await one('UPDATE admin_announcements SET title=$1,body=$2,active=$3 WHERE id=$4 RETURNING *',[title,body,req.body.active??old.active,old.id]);await logAdmin(req,'announcement','UPDATE',row.id);res.json(row);
+}catch(e){next(e)}});
+app.get('/api/admin/events',auth,async(req,res,next)=>{try{if(!(await adminOnly(req,res)))return;res.json(await q('SELECT e.*,u.name actor FROM admin_events e LEFT JOIN users u ON u.id=e.actor_id ORDER BY e.id DESC LIMIT 300'))}catch(e){next(e)}});
+app.get('/api/admin/stats',auth,async(req,res,next)=>{try{
+ const sid=Number(req.query.site_id);if(!(await can(req,sid)))return res.status(403).json({error:'현장 권한이 없습니다.'});
+ const result={};for(const [name,table] of Object.entries(EDIT_TABLE)){result[name]=Number((await one(`SELECT COUNT(*)::int n FROM ${table} WHERE site_id=$1 AND deleted_at IS NULL`,[sid])).n)}
+ result.pending=Number((await one("SELECT COUNT(*)::int n FROM record_approvals WHERE site_id=$1 AND status='SUBMITTED'",[sid])).n);res.json(result);
+}catch(e){next(e)}});
+app.get('/api/admin/export.csv',auth,async(req,res,next)=>{try{
+ const sid=Number(req.query.site_id),type=String(req.query.type||''),table=EDIT_TABLE[type];if(!table)return res.status(400).json({error:'기록 종류 오류'});
+ if(!(await can(req,sid)))return res.status(403).json({error:'현장 권한이 없습니다.'});
+ const rows=await q(`SELECT * FROM ${table} WHERE site_id=$1 AND deleted_at IS NULL ORDER BY id DESC LIMIT 10000`,[sid]);
+ const keys=rows.length?Object.keys(rows[0]):['id','site_id'];const csvCell=v=>'"'+String(v==null?'':typeof v==='object'?JSON.stringify(v):v).replace(/^[=+@\-\t\r]/,'\'$&').replace(/"/g,'""')+'"';
+ res.set({'Content-Type':'text/csv; charset=utf-8','Content-Disposition':`attachment; filename="${type}-site-${sid}.csv"`});res.send('\uFEFF'+[keys.map(csvCell).join(','),...rows.map(r=>keys.map(k=>csvCell(r[k])).join(','))].join('\r\n'));
+}catch(e){next(e)}});
+
 app.use((req,res)=>{if(req.method==="GET")res.sendFile(path.join(__dirname,"public","index.html"));else res.status(404).json({error:"요청을 찾을 수 없습니다."})});
 init().then(()=>app.listen(PORT,"0.0.0.0",()=>console.log(`Safety app running on ${PORT}`))).catch(e=>{console.error(e);process.exit(1)});
