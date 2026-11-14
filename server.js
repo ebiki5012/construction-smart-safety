@@ -120,6 +120,18 @@ async function init(){
  CREATE TABLE IF NOT EXISTS admin_events(id BIGSERIAL PRIMARY KEY,actor_id INT REFERENCES users(id),category TEXT NOT NULL,action TEXT NOT NULL,object_id TEXT,details JSONB,created_at TIMESTAMPTZ NOT NULL DEFAULT now());
  `);
 
+ // V6: company provenance, issue-to-action linkage; existing rows remain intact.
+ await pool.query(`CREATE TABLE IF NOT EXISTS contractors(id SERIAL PRIMARY KEY,site_id INT NOT NULL REFERENCES sites(id),name TEXT NOT NULL,active BOOLEAN NOT NULL DEFAULT TRUE,UNIQUE(site_id,name));
+ ALTER TABLE risks ADD COLUMN IF NOT EXISTS contractor_id INT REFERENCES contractors(id);
+ ALTER TABLE risks ADD COLUMN IF NOT EXISTS entry_mode TEXT NOT NULL DEFAULT 'DIRECT';
+ ALTER TABLE tbms ADD COLUMN IF NOT EXISTS contractor_id INT REFERENCES contractors(id);
+ ALTER TABLE tbms ADD COLUMN IF NOT EXISTS entry_mode TEXT NOT NULL DEFAULT 'DIRECT';
+ ALTER TABLE actions ADD COLUMN IF NOT EXISTS issue_text TEXT;
+ ALTER TABLE actions ADD COLUMN IF NOT EXISTS contractor_id INT REFERENCES contractors(id);
+ ALTER TABLE actions ADD COLUMN IF NOT EXISTS created_by INT REFERENCES users(id);
+ ALTER TABLE actions ADD COLUMN IF NOT EXISTS verified_by INT REFERENCES users(id);
+ ALTER TABLE actions ADD COLUMN IF NOT EXISTS verified_at TIMESTAMPTZ;
+ CREATE INDEX IF NOT EXISTS contractors_site_idx ON contractors(site_id);`);
  // V5: additive, non-destructive migrations. No legacy approval tables are rewritten.
  await pool.query(`
  ALTER TABLE record_photos ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
@@ -215,7 +227,16 @@ app.get("/api/dashboard",auth,async(req,res)=>{
    one("SELECT count(*)::int n FROM actions WHERE deleted_at IS NULL AND site_id=$1 AND status<>'DONE'",[sid]),
    one("SELECT count(*)::int n FROM tbms WHERE deleted_at IS NULL AND site_id=$1 AND tbm_date=CURRENT_DATE",[sid])
  ]);
- res.json({riskCount:a.n,highRiskCount:b.n,actionOpen:c.n,todayTbm:d.n});
+ const extra=await one(`SELECT
+ (SELECT count(*)::int FROM risks WHERE site_id=$1 AND deleted_at IS NULL AND created_at>=CURRENT_DATE) + (SELECT count(*)::int FROM tbms WHERE site_id=$1 AND deleted_at IS NULL AND created_at>=CURRENT_DATE) new_today,
+ (SELECT count(*)::int FROM approval_cases WHERE site_id=$1 AND status='PENDING') pending,
+ (SELECT count(*)::int FROM approval_cases WHERE site_id=$1 AND status='PENDING' AND record_type='risk') risk_pending,
+ (SELECT count(*)::int FROM approval_cases WHERE site_id=$1 AND status='PENDING' AND record_type='tbm') tbm_pending,
+ (SELECT count(*)::int FROM actions WHERE site_id=$1 AND deleted_at IS NULL AND status='DONE' AND verified_at IS NULL) verification_pending`,[sid]);
+ const recent=await q(`SELECT kind,id,record_date,title,author_name,contractor_name FROM (
+ SELECT 'risk' kind,r.id,r.risk_date record_date,r.work title,u.name author_name,c.name contractor_name,r.created_at ts FROM risks r LEFT JOIN users u ON u.id=r.author_id LEFT JOIN contractors c ON c.id=r.contractor_id WHERE r.site_id=$1 AND r.deleted_at IS NULL
+ UNION ALL SELECT 'tbm',t.id,t.tbm_date,t.work_name,u.name,c.name,t.created_at FROM tbms t LEFT JOIN users u ON u.id=t.created_by LEFT JOIN contractors c ON c.id=t.contractor_id WHERE t.site_id=$1 AND t.deleted_at IS NULL) x ORDER BY ts DESC LIMIT 12`,[sid]);
+ res.json({riskCount:a.n,highRiskCount:b.n,actionOpen:c.n,todayTbm:d.n,...extra,recent});
 });
 
 // 최고관리자 전체 현장 집계. 일반 직원에게는 전체 현장 데이터가 노출되지 않습니다.
@@ -273,18 +294,23 @@ app.put("/api/settings",auth,async(req,res)=>{
  res.json(await one("SELECT * FROM settings WHERE site_id=$1",[sid]));
 });
 
+app.get('/api/v6/contractors',auth,async(req,res,next)=>{try{const sid=Number(req.query.site_id);if(!(await can(req,sid)))return res.status(403).json({error:'현장 권한 없음'});res.json(await q('SELECT * FROM contractors WHERE site_id=$1 AND active=true ORDER BY name',[sid]));}catch(e){next(e)}});
+app.post('/api/v6/contractors',auth,async(req,res,next)=>{try{const sid=Number(req.body.site_id),name=String(req.body.name||'').trim();if(!(await can(req,sid,['ADMIN','MANAGER'])))return res.status(403).json({error:'현장 관리자 권한 필요'});if(!name||name.length>100)return res.status(400).json({error:'업체명을 확인하세요'});res.json(await one('INSERT INTO contractors(site_id,name) VALUES($1,$2) ON CONFLICT(site_id,name) DO UPDATE SET active=true RETURNING *',[sid,name]));}catch(e){next(e)}});
+app.post('/api/v6/actions/:id/verify',auth,async(req,res,next)=>{try{const a=await one('SELECT * FROM actions WHERE id=$1 AND deleted_at IS NULL',[req.params.id]);if(!a)return res.status(404).json({error:'지적사항 없음'});if(!(await can(req,a.site_id,['ADMIN','MANAGER'])))return res.status(403).json({error:'관리자 권한 필요'});if(a.status!=='DONE')return res.status(409).json({error:'먼저 조치 완료 처리가 필요합니다'});res.json(await one('UPDATE actions SET verified_by=$1,verified_at=now() WHERE id=$2 RETURNING *',[req.session.userId,a.id]));}catch(e){next(e)}});
 app.get("/api/risks",auth,async(req,res)=>{
  const sid=Number(req.query.site_id);if(!(await can(req,sid)))return res.status(403).json({error:"현장 권한이 없습니다."});
- res.json(await q("SELECT r.*,u.name author_name FROM risks r LEFT JOIN users u ON u.id=r.author_id WHERE r.site_id=$1 AND r.deleted_at IS NULL ORDER BY r.id DESC",[sid]));
+ res.json(await q("SELECT r.*,u.name author_name,c.name contractor_name,ac.status approval_status FROM risks r LEFT JOIN users u ON u.id=r.author_id LEFT JOIN contractors c ON c.id=r.contractor_id LEFT JOIN approval_cases ac ON ac.record_type='risk' AND ac.record_id=r.id WHERE r.site_id=$1 AND r.deleted_at IS NULL ORDER BY r.id DESC",[sid]));
 });
 app.post("/api/risks",auth,async(req,res)=>{
  const sid=Number(req.body.site_id);if(!(await can(req,sid)))return res.status(403).json({error:"현장 권한이 없습니다."});
  if(req.body.period_start&&req.body.period_end&&req.body.period_start>req.body.period_end)return res.status(400).json({error:"적용 시작일이 종료일보다 늦습니다."});
  const s=await one("SELECT * FROM settings WHERE site_id=$1",[sid])||{low_max:3,medium_max:5};
+ if(req.body.contractor_id&&!await one('SELECT id FROM contractors WHERE id=$1 AND site_id=$2 AND active=true',[req.body.contractor_id,sid]))return res.status(400).json({error:'현장 협력업체를 선택하세요'});
+ if(req.body.entry_mode==='PROXY'&&!(await can(req,sid,['ADMIN','MANAGER'])))return res.status(403).json({error:'원청 대리 작성은 관리자 권한이 필요합니다'});
  const r=riskCalc(req.body.frequency,req.body.severity,s),u=await user(req);
- const x=await one(`INSERT INTO risks(site_id,risk_date,area,work,hazard,frequency,severity,score,level,measure,author_id,period_start,period_end)
- VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
- [sid,req.body.date||null,req.body.area,req.body.work,req.body.hazard,r.frequency,r.severity,r.score,r.level,req.body.measure,u.id,req.body.period_start||null,req.body.period_end||null]);
+ const x=await one(`INSERT INTO risks(site_id,risk_date,area,work,hazard,frequency,severity,score,level,measure,author_id,period_start,period_end,contractor_id,entry_mode)
+ VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *`,
+ [sid,req.body.date||null,req.body.area,req.body.work,req.body.hazard,r.frequency,r.severity,r.score,r.level,req.body.measure,u.id,req.body.period_start||null,req.body.period_end||null,req.body.contractor_id||null,req.body.entry_mode==='PROXY'?'PROXY':'DIRECT']);
  res.json(x);
 });
 
@@ -420,12 +446,13 @@ app.post("/api/templates",auth,async(req,res)=>{
 
 app.get("/api/actions",auth,async(req,res)=>{
  const sid=Number(req.query.site_id);if(!(await can(req,sid)))return res.status(403).json({error:"현장 권한이 없습니다."});
- res.json(await q("SELECT * FROM actions WHERE deleted_at IS NULL AND site_id=$1 ORDER BY due_date NULLS LAST,id DESC",[sid]));
+ res.json(await q("SELECT a.*,c.name contractor_name,u.name author_name FROM actions a LEFT JOIN contractors c ON c.id=a.contractor_id LEFT JOIN users u ON u.id=a.created_by WHERE a.deleted_at IS NULL AND a.site_id=$1 ORDER BY a.due_date NULLS LAST,a.id DESC",[sid]));
 });
 app.post("/api/actions",auth,async(req,res)=>{
  const sid=Number(req.body.site_id);if(!(await can(req,sid)))return res.status(403).json({error:"현장 권한이 없습니다."});
- res.json(await one(`INSERT INTO actions(site_id,risk_id,item,manager,due_date) VALUES($1,$2,$3,$4,$5) RETURNING *`,
- [sid,req.body.risk_id||null,req.body.item,req.body.manager,req.body.due_date||null]));
+ if(req.body.contractor_id&&!await one("SELECT id FROM contractors WHERE id=$1 AND site_id=$2 AND active=true",[req.body.contractor_id,sid]))return res.status(400).json({error:"현장 협력업체를 선택하세요"});
+ res.json(await one(`INSERT INTO actions(site_id,risk_id,item,manager,due_date,issue_text,contractor_id,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+ [sid,req.body.risk_id||null,req.body.item,req.body.manager,req.body.due_date||null,req.body.issue_text||null,req.body.contractor_id||null,req.session.userId]));
 });
 app.patch("/api/actions/:id",auth,async(req,res)=>{
  const a=await one("SELECT * FROM actions WHERE id=$1",[req.params.id]);if(!a||!(await can(req,a.site_id)))return res.status(404).json({error:"조치사항을 찾을 수 없습니다."});
@@ -436,14 +463,16 @@ app.patch("/api/actions/:id",auth,async(req,res)=>{
 
 app.get("/api/tbms",auth,async(req,res)=>{
  const sid=Number(req.query.site_id);if(!(await can(req,sid)))return res.status(403).json({error:"현장 권한이 없습니다."});
- res.json(await q("SELECT t.*,r.work risk_work FROM tbms t LEFT JOIN risks r ON r.id=t.risk_id WHERE t.site_id=$1 AND t.deleted_at IS NULL ORDER BY t.id DESC",[sid]));
+ res.json(await q("SELECT t.*,r.work risk_work,u.name author_name,c.name contractor_name,ac.status approval_status FROM tbms t LEFT JOIN risks r ON r.id=t.risk_id LEFT JOIN users u ON u.id=t.created_by LEFT JOIN contractors c ON c.id=t.contractor_id LEFT JOIN approval_cases ac ON ac.record_type='tbm' AND ac.record_id=t.id WHERE t.site_id=$1 AND t.deleted_at IS NULL ORDER BY t.id DESC",[sid]));
 });
 app.post("/api/tbms",auth,async(req,res)=>{
  const sid=Number(req.body.site_id);if(!(await can(req,sid)))return res.status(403).json({error:"현장 권한이 없습니다."});
+ if(req.body.contractor_id&&!await one('SELECT id FROM contractors WHERE id=$1 AND site_id=$2 AND active=true',[req.body.contractor_id,sid]))return res.status(400).json({error:'현장 협력업체를 선택하세요'});
+ if(req.body.entry_mode==='PROXY'&&!(await can(req,sid,['ADMIN','MANAGER'])))return res.status(403).json({error:'원청 대리 작성은 관리자 권한이 필요합니다'});
  const u=await user(req);
- res.json(await one(`INSERT INTO tbms(site_id,tbm_date,team,work_name,people,hazard,measure,risk_id,created_by)
- VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
- [sid,req.body.tbm_date||null,req.body.team,req.body.work_name,Number(req.body.people||0),req.body.hazard,req.body.measure,req.body.risk_id||null,u.id]));
+ res.json(await one(`INSERT INTO tbms(site_id,tbm_date,team,work_name,people,hazard,measure,risk_id,created_by,contractor_id,entry_mode)
+ VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
+ [sid,req.body.tbm_date||null,req.body.team,req.body.work_name,Number(req.body.people||0),req.body.hazard,req.body.measure,req.body.risk_id||null,u.id,req.body.contractor_id||null,req.body.entry_mode==='PROXY'?'PROXY':'DIRECT']));
 });
 
 app.post("/api/sites",auth,async(req,res)=>{
