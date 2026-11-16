@@ -6,7 +6,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node tests/static.mjs && node tests/weekly_flow.mjs"
+    "test": "node tests/static.mjs && node tests/menu_layout.mjs && node tests/weekly_flow.mjs"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
