@@ -56,6 +56,7 @@ const document = {querySelectorAll(selector) {
 const sandbox = {
   document, $, me:{role:'ADMIN'}, sid:'1',siteContext:{role:'ADMIN'},v8WeeklyMode:'approval',v8ActionMode:'open',
   requireSite:() => true,v8IsManager:() => true,v7Monday:() => '2026-11-16',today:() => '2026-11-16',
+  normalizeWorkspaceLayout:() => {},window:{reviewUi:null},
 };
 for (const f of ['loadDash','loadContractors','loadSettings','loadRisks','loadTbms','loadActions','loadV8RiskWeek',
   'loadV7WeeklyPreview','loadV7WeeklyList','loadV8TbmApprovals']) sandbox[f] = () => {};
