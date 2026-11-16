@@ -1,0 +1,17 @@
+// Offline structural checks; no npm install or PostgreSQL required.
+import fs from 'node:fs';
+import assert from 'node:assert/strict';
+import vm from 'node:vm';
+const root=new URL('../',import.meta.url);
+const server=fs.readFileSync(new URL('server.js',root),'utf8');
+const html=fs.readFileSync(new URL('public/index.html',root),'utf8');
+const js=html.match(/<script>([\s\S]*?)<\/script>/)?.[1];assert(js,'Main JS missing');
+new vm.Script(js,{filename:'index.html inline script'});
+new vm.Script(server,{filename:'server.js'});
+const markup=html.split('<script>')[0];
+const ids=[...markup.matchAll(/\bid="([a-zA-Z0-9_-]+)"/g)].map(x=>x[1]);
+assert.equal(ids.length,new Set(ids).size,'Duplicate HTML id');
+for(const id of ['v8RiskWeek','v8RiskCompany','v8RiskGroups','v7WeekStart','v8MeetingDate','v8Attendees','v7SubmitWeekly','v8ReadyWeekly','v8CompanyUsers','v8CompanySummary','v8TbmApprovals','v8WeeklyEvents','photoModal','libraryResults','v8ActionForm'])assert(ids.includes(id),`Missing UI id ${id}`);
+for(const path of ['/api/v8/site-context','/api/v8/site-users','/api/v8/contractor-members/:userId','/api/v8/weekly/ready','/api/v8/weekly/:id/report','/api/v8/weekly/:id/revisions','/api/v8/tbm/:id/submit','/api/v8/tbm/:id/decision','/api/photo-library'])assert(server.includes(path),`Missing route ${path}`);
+for(const table of ['contractor_memberships','weekly_contractor_submissions','weekly_risk_revisions','weekly_risk_events','tbm_approval_events'])assert(server.includes('CREATE TABLE IF NOT EXISTS '+table),`Missing migration ${table}`);
+console.log('PASS static: server/UI syntax, HTML IDs, endpoints, migrations');

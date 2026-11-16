@@ -84,6 +84,13 @@ async function init(){
    created_by INT REFERENCES users(id),created_at TIMESTAMPTZ DEFAULT now()
  );
  `);
+ await pool.query(`CREATE TABLE IF NOT EXISTS weekly_risk_reviews(
+ id BIGSERIAL PRIMARY KEY,site_id INT NOT NULL REFERENCES sites(id),week_start DATE NOT NULL,
+ meeting_notes TEXT NOT NULL DEFAULT '',status TEXT NOT NULL DEFAULT 'DRAFT',
+ submitted_by INT REFERENCES users(id),submitted_at TIMESTAMPTZ,
+ approved_by INT REFERENCES users(id),approved_at TIMESTAMPTZ,decision_comment TEXT,
+ UNIQUE(site_id,week_start));
+ CREATE TABLE IF NOT EXISTS weekly_risk_items(weekly_id BIGINT NOT NULL REFERENCES weekly_risk_reviews(id) ON DELETE CASCADE,risk_id INT NOT NULL REFERENCES risks(id),PRIMARY KEY(weekly_id,risk_id));`);
  await pool.query(`CREATE TABLE IF NOT EXISTS record_photos(
  id SERIAL PRIMARY KEY,site_id INT NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
  record_type TEXT NOT NULL CHECK(record_type IN ('risk','tbm','action')),
@@ -161,12 +168,68 @@ async function init(){
  CREATE INDEX IF NOT EXISTS approval_cases_site_status ON approval_cases(site_id,status);
  CREATE INDEX IF NOT EXISTS approval_decisions_case ON approval_decisions(case_id,id);
  `);
+ // V7 integrated: additive contractor membership, immutable weekly snapshots and decision history.
+ await pool.query(`
+ ALTER TABLE custom_records ADD COLUMN IF NOT EXISTS contractor_id INT REFERENCES contractors(id);
+ ALTER TABLE custom_record_photos ADD COLUMN IF NOT EXISTS uploaded_by INT REFERENCES users(id);
+ CREATE TABLE IF NOT EXISTS contractor_memberships(
+  user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  site_id INT NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+  contractor_id INT NOT NULL REFERENCES contractors(id),
+  assigned_by INT REFERENCES users(id), assigned_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY(user_id,site_id)
+ );
+ CREATE TABLE IF NOT EXISTS weekly_contractor_submissions(
+  site_id INT NOT NULL REFERENCES sites(id),week_start DATE NOT NULL,
+  contractor_id INT NOT NULL REFERENCES contractors(id),
+  submitted_by INT NOT NULL REFERENCES users(id),entry_mode TEXT NOT NULL DEFAULT 'DIRECT',
+  submitted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY(site_id,week_start,contractor_id)
+ );
+ ALTER TABLE weekly_risk_reviews ADD COLUMN IF NOT EXISTS revision INT NOT NULL DEFAULT 1;
+ ALTER TABLE weekly_risk_reviews ADD COLUMN IF NOT EXISTS snapshot JSONB;
+ ALTER TABLE weekly_risk_reviews ADD COLUMN IF NOT EXISTS snapshot_hash TEXT;
+ ALTER TABLE weekly_risk_reviews ADD COLUMN IF NOT EXISTS attendees TEXT NOT NULL DEFAULT '';
+ ALTER TABLE weekly_risk_reviews ADD COLUMN IF NOT EXISTS meeting_date DATE;
+ ALTER TABLE weekly_risk_reviews ADD COLUMN IF NOT EXISTS locked_at TIMESTAMPTZ;
+ CREATE TABLE IF NOT EXISTS weekly_risk_revisions(
+  weekly_id BIGINT NOT NULL REFERENCES weekly_risk_reviews(id) ON DELETE CASCADE,
+  revision INT NOT NULL,snapshot JSONB NOT NULL,snapshot_hash TEXT NOT NULL,
+  meeting_notes TEXT NOT NULL DEFAULT '',attendees TEXT NOT NULL DEFAULT '',meeting_date DATE,
+  submitted_by INT REFERENCES users(id),submitted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY(weekly_id,revision)
+ );
+ CREATE TABLE IF NOT EXISTS tbm_approval_events(
+  id BIGSERIAL PRIMARY KEY,tbm_id INT NOT NULL REFERENCES tbms(id),site_id INT NOT NULL REFERENCES sites(id),
+  action TEXT NOT NULL,actor_id INT REFERENCES users(id),comment TEXT NOT NULL DEFAULT '',created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+ );
+ ALTER TABLE custom_forms ADD COLUMN IF NOT EXISTS parent_menu TEXT NOT NULL DEFAULT 'custom';
+ CREATE TABLE IF NOT EXISTS weekly_risk_events(
+  id BIGSERIAL PRIMARY KEY,weekly_id BIGINT NOT NULL REFERENCES weekly_risk_reviews(id) ON DELETE CASCADE,
+  revision INT NOT NULL,action TEXT NOT NULL,actor_id INT REFERENCES users(id),
+  comment TEXT NOT NULL DEFAULT '',created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+ );
+ CREATE INDEX IF NOT EXISTS weekly_risk_events_idx ON weekly_risk_events(weekly_id,id);
+ CREATE INDEX IF NOT EXISTS weekly_contractor_submissions_idx ON weekly_contractor_submissions(site_id,week_start);
+ `);
+ // Preserve the current contents of older weekly cases as a one-time migration snapshot.
+ // This is an upgrade-time snapshot, NOT a claim to reconstruct their historical approval state.
+ await pool.query(`UPDATE weekly_risk_reviews w SET snapshot=COALESCE((
+  SELECT jsonb_agg(jsonb_build_object('id',r.id,'area',r.area,'work',r.work,'hazard',r.hazard,
+  'measure',r.measure,'frequency',r.frequency,'severity',r.severity,'score',r.score,'level',r.level,
+  'risk_date',r.risk_date,'period_start',r.period_start,'period_end',r.period_end,
+  'contractor_id',r.contractor_id,'contractor_name',c.name,'author_name',u.name,'entry_mode',r.entry_mode)
+  ORDER BY r.id) FROM weekly_risk_items wi JOIN risks r ON r.id=wi.risk_id
+  LEFT JOIN users u ON u.id=r.author_id LEFT JOIN contractors c ON c.id=r.contractor_id
+  WHERE wi.weekly_id=w.id), '[]'::jsonb) WHERE w.snapshot IS NULL`);
+ await pool.query(`INSERT INTO weekly_risk_revisions(weekly_id,revision,snapshot,snapshot_hash,meeting_notes,attendees,meeting_date,submitted_by,submitted_at) SELECT w.id,w.revision,COALESCE(w.snapshot,'[]'::jsonb),COALESCE(w.snapshot_hash,'legacy-upgrade'),w.meeting_notes,w.attendees,w.meeting_date,w.submitted_by,COALESCE(w.submitted_at,now()) FROM weekly_risk_reviews w ON CONFLICT(weekly_id,revision) DO NOTHING`);
  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS session_version INTEGER NOT NULL DEFAULT 0");
  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT");
  await pool.query("CREATE UNIQUE INDEX IF NOT EXISTS users_username_lower_unique ON users (lower(username)) WHERE username IS NOT NULL");
  const admin=await one("SELECT id FROM users WHERE role='ADMIN' ORDER BY id LIMIT 1");
  if(!admin){
-   const ph=await bcrypt.hash("admin1234",10);
+   if(process.env.NODE_ENV==='production'&&!process.env.INITIAL_ADMIN_PASSWORD)throw Error('초기 최고관리자 비밀번호 INITIAL_ADMIN_PASSWORD 환경변수를 설정해야 합니다.');
+   const ph=await bcrypt.hash(process.env.INITIAL_ADMIN_PASSWORD||'admin1234',12);
    const u=await one("INSERT INTO users(name,email,password_hash,role) VALUES($1,$2,$3,'ADMIN') RETURNING id",
      ["시스템 관리자","admin@site.local",ph]);
    const s=await one("INSERT INTO sites(name,address,status) VALUES($1,$2,'진행중') RETURNING id",
@@ -184,11 +247,44 @@ async function auth(req,res,next){
  }catch(e){next(e)}
 }
 async function user(req){return one("SELECT id,name,email,username,role,active FROM users WHERE id=$1",[req.session.userId])}
-async function can(req,siteId,roles=[]){
- const u=await user(req); if(!u||!u.active)return false;
- const m=await one("SELECT role FROM memberships WHERE user_id=$1 AND site_id=$2",[u.id,siteId]);
- return !!m && (!roles.length||roles.includes(u.role)||roles.includes(m.role));
+async function siteRole(req,siteId){
+ const u=await user(req);if(!u||!u.active||!Number.isSafeInteger(Number(siteId))||Number(siteId)<1)return null;
+ if(u.role==='ADMIN')return 'ADMIN';
+ const m=await one('SELECT role FROM memberships WHERE user_id=$1 AND site_id=$2',[u.id,siteId]);
+ return m?.role||null;
 }
+async function can(req,siteId,roles=[]){
+ const role=await siteRole(req,siteId);
+ return !!role&&(!roles.length||role==='ADMIN'||roles.includes(role));
+}
+async function companyScope(req,siteId){
+ const role=await siteRole(req,siteId);
+ if(!role)return {allowed:false,restricted:true,contractor_id:null};
+ if(role==='ADMIN'||role==='MANAGER')return {allowed:true,restricted:false,contractor_id:null};
+ const cm=await one('SELECT contractor_id FROM contractor_memberships WHERE user_id=$1 AND site_id=$2',[req.session.userId,siteId]);
+ return {allowed:true,restricted:true,contractor_id:cm?.contractor_id||null};
+}
+async function customRecordAllowed(req,rec){
+ if(!rec)return false;const scope=await companyScope(req,rec.site_id);
+ return scope.allowed&&(!scope.restricted||!!scope.contractor_id&&Number(rec.contractor_id)===scope.contractor_id);
+}
+async function recordCompanyAllowed(req,type,id,siteId){
+ const scope=await companyScope(req,siteId);if(!scope.allowed)return false;
+ if(!scope.restricted)return true;
+ if(!scope.contractor_id)return false;
+ const table={risk:'risks',tbm:'tbms',action:'actions'}[type];
+ if(!table)return false;
+ return !!await one(`SELECT id FROM ${table} WHERE id=$1 AND site_id=$2 AND contractor_id=$3`,[id,siteId,scope.contractor_id]);
+}
+function isoDate(value){return typeof value==='string'?value.slice(0,10):value instanceof Date?value.toISOString().slice(0,10):''}
+function validMonday(date){return /^\d{4}-\d{2}-\d{2}$/.test(date)&&!Number.isNaN(Date.parse(date))&&new Date(date+'T00:00:00Z').getUTCDay()===1}
+const weeklyRowsSql=`SELECT r.id,r.area,r.work,r.hazard,r.measure,r.frequency,r.severity,r.score,r.level,
+ r.risk_date,r.period_start,r.period_end,r.contractor_id,r.entry_mode,
+ u.name author_name,c.name contractor_name FROM risks r
+ LEFT JOIN users u ON u.id=r.author_id LEFT JOIN contractors c ON c.id=r.contractor_id
+ WHERE r.site_id=$1 AND r.deleted_at IS NULL AND COALESCE(r.period_start,r.risk_date)<($2::date+7)
+ AND COALESCE(r.period_end,r.period_start,r.risk_date)>=$2::date ORDER BY c.name NULLS LAST,r.id`;
+
 function riskCalc(f,s,setting){
  const freq=Number(f)||1,sev=Number(s)||1,score=freq*sev;
  const level=score<=setting.low_max?"낮음":score<=setting.medium_max?"보통":"높음";
@@ -219,25 +315,31 @@ app.get("/api/sites",auth,async(req,res)=>{
  return res.json(await q("SELECT s.* FROM sites s JOIN memberships m ON m.site_id=s.id WHERE m.user_id=$1 ORDER BY s.id DESC",[u.id]));
 });
 
-app.get("/api/dashboard",auth,async(req,res)=>{
- const sid=Number(req.query.site_id);if(!(await can(req,sid)))return res.status(403).json({error:"현장 권한이 없습니다."});
+app.get("/api/dashboard",auth,async(req,res,next)=>{try{
+ const sid=Number(req.query.site_id),scope=await companyScope(req,sid);
+ if(!scope.allowed)return res.status(403).json({error:"현장 권한이 없습니다."});
+ const cid=scope.restricted?scope.contractor_id||-1:null;
  const [a,b,c,d]=await Promise.all([
-   one("SELECT count(*)::int n FROM risks WHERE deleted_at IS NULL AND site_id=$1",[sid]),
-   one("SELECT count(*)::int n FROM risks WHERE deleted_at IS NULL AND site_id=$1 AND level='높음'",[sid]),
-   one("SELECT count(*)::int n FROM actions WHERE deleted_at IS NULL AND site_id=$1 AND status<>'DONE'",[sid]),
-   one("SELECT count(*)::int n FROM tbms WHERE deleted_at IS NULL AND site_id=$1 AND tbm_date=CURRENT_DATE",[sid])
+  one('SELECT count(*)::int n FROM risks WHERE deleted_at IS NULL AND site_id=$1 AND ($2::int IS NULL OR contractor_id=$2)',[sid,cid]),
+  one("SELECT count(*)::int n FROM risks WHERE deleted_at IS NULL AND site_id=$1 AND level='높음' AND ($2::int IS NULL OR contractor_id=$2)",[sid,cid]),
+  one("SELECT count(*)::int n FROM actions WHERE deleted_at IS NULL AND site_id=$1 AND status<>'DONE' AND ($2::int IS NULL OR contractor_id=$2)",[sid,cid]),
+  one('SELECT count(*)::int n FROM tbms WHERE deleted_at IS NULL AND site_id=$1 AND tbm_date=CURRENT_DATE AND ($2::int IS NULL OR contractor_id=$2)',[sid,cid])
  ]);
  const extra=await one(`SELECT
- (SELECT count(*)::int FROM risks WHERE site_id=$1 AND deleted_at IS NULL AND created_at>=CURRENT_DATE) + (SELECT count(*)::int FROM tbms WHERE site_id=$1 AND deleted_at IS NULL AND created_at>=CURRENT_DATE) new_today,
- (SELECT count(*)::int FROM approval_cases WHERE site_id=$1 AND status='PENDING') pending,
- (SELECT count(*)::int FROM approval_cases WHERE site_id=$1 AND status='PENDING' AND record_type='risk') risk_pending,
- (SELECT count(*)::int FROM approval_cases WHERE site_id=$1 AND status='PENDING' AND record_type='tbm') tbm_pending,
- (SELECT count(*)::int FROM actions WHERE site_id=$1 AND deleted_at IS NULL AND status='DONE' AND verified_at IS NULL) verification_pending`,[sid]);
- const recent=await q(`SELECT kind,id,record_date,title,author_name,contractor_name FROM (
- SELECT 'risk' kind,r.id,r.risk_date record_date,r.work title,u.name author_name,c.name contractor_name,r.created_at ts FROM risks r LEFT JOIN users u ON u.id=r.author_id LEFT JOIN contractors c ON c.id=r.contractor_id WHERE r.site_id=$1 AND r.deleted_at IS NULL
- UNION ALL SELECT 'tbm',t.id,t.tbm_date,t.work_name,u.name,c.name,t.created_at FROM tbms t LEFT JOIN users u ON u.id=t.created_by LEFT JOIN contractors c ON c.id=t.contractor_id WHERE t.site_id=$1 AND t.deleted_at IS NULL) x ORDER BY ts DESC LIMIT 12`,[sid]);
+ (SELECT count(*)::int FROM risks WHERE site_id=$1 AND deleted_at IS NULL AND created_at>=CURRENT_DATE AND ($2::int IS NULL OR contractor_id=$2)) +
+ (SELECT count(*)::int FROM tbms WHERE site_id=$1 AND deleted_at IS NULL AND created_at>=CURRENT_DATE AND ($2::int IS NULL OR contractor_id=$2)) new_today,
+ (SELECT count(*)::int FROM approval_cases ac WHERE ac.site_id=$1 AND ac.status='PENDING' AND $2::int IS NULL) legacy_pending,
+ (SELECT count(*)::int FROM weekly_risk_reviews w WHERE w.site_id=$1 AND w.status='PENDING' AND ($2::int IS NULL OR EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(w.snapshot,'[]'::jsonb)) v WHERE v->>'contractor_id'=$2::text))) weekly_pending,
+ (SELECT count(*)::int FROM record_approvals ra JOIN tbms t ON t.id=ra.record_id AND ra.record_type='tbm' WHERE ra.site_id=$1 AND ra.status='SUBMITTED' AND ($2::int IS NULL OR t.contractor_id=$2)) tbm_review_pending,
+ (SELECT count(*)::int FROM contractors WHERE site_id=$1 AND active=true AND ($2::int IS NULL OR id=$2)) company_count,
+ (SELECT count(*)::int FROM contractors c WHERE c.site_id=$1 AND c.active=true AND ($2::int IS NULL OR c.id=$2) AND NOT EXISTS(SELECT 1 FROM risks r WHERE r.site_id=$1 AND r.contractor_id=c.id AND r.deleted_at IS NULL AND COALESCE(r.period_start,r.risk_date)<(date_trunc('week',CURRENT_DATE)::date+7) AND COALESCE(r.period_end,r.period_start,r.risk_date)>=date_trunc('week',CURRENT_DATE)::date)) week_unregistered,
+ (SELECT count(*)::int FROM actions WHERE site_id=$1 AND deleted_at IS NULL AND status<>'DONE' AND due_date<CURRENT_DATE AND ($2::int IS NULL OR contractor_id=$2)) overdue_actions,
+ (SELECT count(*)::int FROM actions WHERE site_id=$1 AND deleted_at IS NULL AND status='DONE' AND verified_at IS NULL AND ($2::int IS NULL OR contractor_id=$2)) verification_pending`,[sid,cid]);
+ const recent=await q(`SELECT kind,id,record_date,title,author_name,contractor_name,contractor_id FROM (
+ SELECT 'risk' kind,r.id,r.risk_date record_date,r.work title,u.name author_name,c.name contractor_name,r.contractor_id,r.created_at ts FROM risks r LEFT JOIN users u ON u.id=r.author_id LEFT JOIN contractors c ON c.id=r.contractor_id WHERE r.site_id=$1 AND r.deleted_at IS NULL AND ($2::int IS NULL OR r.contractor_id=$2)
+ UNION ALL SELECT 'tbm',t.id,t.tbm_date,t.work_name,u.name,c.name,t.contractor_id,t.created_at FROM tbms t LEFT JOIN users u ON u.id=t.created_by LEFT JOIN contractors c ON c.id=t.contractor_id WHERE t.site_id=$1 AND t.deleted_at IS NULL AND ($2::int IS NULL OR t.contractor_id=$2)) x ORDER BY ts DESC LIMIT 12`,[sid,cid]);
  res.json({riskCount:a.n,highRiskCount:b.n,actionOpen:c.n,todayTbm:d.n,...extra,recent});
-});
+}catch(e){next(e)}});
 
 // 최고관리자 전체 현장 집계. 일반 직원에게는 전체 현장 데이터가 노출되지 않습니다.
 app.get("/api/overview",auth,async(req,res,next)=>{
@@ -248,7 +350,10 @@ app.get("/api/overview",auth,async(req,res,next)=>{
    (SELECT count(*)::int FROM risks r WHERE r.deleted_at IS NULL AND r.site_id=s.id) risk_count,
    (SELECT count(*)::int FROM risks r WHERE r.deleted_at IS NULL AND r.site_id=s.id AND r.level='높음') high_count,
    (SELECT count(*)::int FROM actions a WHERE a.deleted_at IS NULL AND a.site_id=s.id AND a.status<>'DONE') open_count,
-   (SELECT count(*)::int FROM tbms t WHERE t.deleted_at IS NULL AND t.site_id=s.id AND t.tbm_date=CURRENT_DATE) today_tbm
+   (SELECT count(*)::int FROM tbms t WHERE t.deleted_at IS NULL AND t.site_id=s.id AND t.tbm_date=CURRENT_DATE) today_tbm,
+   (SELECT count(*)::int FROM weekly_risk_reviews w WHERE w.site_id=s.id AND w.status='PENDING') weekly_pending,
+   (SELECT count(*)::int FROM record_approvals ra WHERE ra.site_id=s.id AND ra.record_type='tbm' AND ra.status='SUBMITTED') tbm_pending,
+   (SELECT count(*)::int FROM contractors c WHERE c.site_id=s.id AND c.active=true) company_count
    FROM sites s ORDER BY s.id DESC`);
   res.json({sites:rows,totals:rows.reduce((a,r)=>({riskCount:a.riskCount+r.risk_count,highRiskCount:a.highRiskCount+r.high_count,actionOpen:a.actionOpen+r.open_count,todayTbm:a.todayTbm+r.today_tbm}),{riskCount:0,highRiskCount:0,actionOpen:0,todayTbm:0})});
  }catch(e){next(e)}
@@ -264,18 +369,19 @@ app.get("/api/history",auth,async(req,res,next)=>{
   const from=String(req.query.from||""),to=String(req.query.to||"");
   if((from&&!/^\d{4}-\d{2}-\d{2}$/.test(from))||(to&&!/^\d{4}-\d{2}-\d{2}$/.test(to)))return res.status(400).json({error:"날짜 형식이 잘못되었습니다."});
   const keyword=String(req.query.keyword||"").slice(0,100);
+  const scope=siteId==='all'?{restricted:false}:await companyScope(req,Number(siteId));
   const params=[siteId==="all"?null:Number(siteId),from||null,to||null,`%${keyword}%`];
   const sql=`SELECT * FROM (
-   SELECT 'risk' kind,r.id,r.site_id,s.name site_name,r.risk_date record_date,r.work title,r.hazard detail,r.measure, r.area extra
+   SELECT 'risk' kind,r.id,r.site_id,s.name site_name,r.risk_date record_date,r.work title,r.hazard detail,r.measure, r.area extra,r.contractor_id
    FROM risks r JOIN sites s ON s.id=r.site_id WHERE r.deleted_at IS NULL
    UNION ALL
-   SELECT 'tbm' kind,t.id,t.site_id,s.name site_name,t.tbm_date record_date,t.work_name title,t.hazard detail,t.measure,t.team extra
+   SELECT 'tbm' kind,t.id,t.site_id,s.name site_name,t.tbm_date record_date,t.work_name title,t.hazard detail,t.measure,t.team extra,t.contractor_id
    FROM tbms t JOIN sites s ON s.id=t.site_id WHERE t.deleted_at IS NULL
   ) h WHERE ($1::int IS NULL OR h.site_id=$1) AND ($2::date IS NULL OR h.record_date >= $2::date)
    AND ($3::date IS NULL OR h.record_date <= $3::date)
    AND (h.title ILIKE $4 OR h.detail ILIKE $4 OR h.extra ILIKE $4 OR h.site_name ILIKE $4)
-   AND ($5::text='all' OR h.kind=$5) ORDER BY h.record_date DESC NULLS LAST,h.id DESC LIMIT 500`;
-  res.json(await q(sql,[...params,type]));
+   AND ($5::text='all' OR h.kind=$5) AND ($6::int IS NULL OR h.contractor_id=$6) ORDER BY h.record_date DESC NULLS LAST,h.id DESC LIMIT 500`;
+  res.json(await q(sql,[...params,type,scope.restricted?scope.contractor_id||-1:null]));
  }catch(e){next(e)}
 });
 
@@ -294,41 +400,229 @@ app.put("/api/settings",auth,async(req,res)=>{
  res.json(await one("SELECT * FROM settings WHERE site_id=$1",[sid]));
 });
 
-app.get('/api/v6/contractors',auth,async(req,res,next)=>{try{const sid=Number(req.query.site_id);if(!(await can(req,sid)))return res.status(403).json({error:'현장 권한 없음'});res.json(await q('SELECT * FROM contractors WHERE site_id=$1 AND active=true ORDER BY name',[sid]));}catch(e){next(e)}});
-app.post('/api/v6/contractors',auth,async(req,res,next)=>{try{const sid=Number(req.body.site_id),name=String(req.body.name||'').trim();if(!(await can(req,sid,['ADMIN','MANAGER'])))return res.status(403).json({error:'현장 관리자 권한 필요'});if(!name||name.length>100)return res.status(400).json({error:'업체명을 확인하세요'});res.json(await one('INSERT INTO contractors(site_id,name) VALUES($1,$2) ON CONFLICT(site_id,name) DO UPDATE SET active=true RETURNING *',[sid,name]));}catch(e){next(e)}});
-app.post('/api/v6/actions/:id/verify',auth,async(req,res,next)=>{try{const a=await one('SELECT * FROM actions WHERE id=$1 AND deleted_at IS NULL',[req.params.id]);if(!a)return res.status(404).json({error:'지적사항 없음'});if(!(await can(req,a.site_id,['ADMIN','MANAGER'])))return res.status(403).json({error:'관리자 권한 필요'});if(a.status!=='DONE')return res.status(409).json({error:'먼저 조치 완료 처리가 필요합니다'});res.json(await one('UPDATE actions SET verified_by=$1,verified_at=now() WHERE id=$2 RETURNING *',[req.session.userId,a.id]));}catch(e){next(e)}});
+// Contractor directory, site-scoped membership and weekly integrated approvals.
+app.get('/api/v6/contractors',auth,async(req,res,next)=>{try{
+ const sid=Number(req.query.site_id);if(!(await can(req,sid)))return res.status(403).json({error:'현장 권한 없음'});
+ res.json(await q('SELECT id,site_id,name,active FROM contractors WHERE site_id=$1 AND active=true ORDER BY name',[sid]));
+}catch(e){next(e)}});
+app.post('/api/v6/contractors',auth,async(req,res,next)=>{try{
+ const sid=Number(req.body.site_id),name=String(req.body.name||'').trim();
+ if(!(await can(req,sid,['MANAGER'])))return res.status(403).json({error:'현장 관리자 권한 필요'});
+ if(!name||name.length>100)return res.status(400).json({error:'업체명을 확인하세요'});
+ res.json(await one('INSERT INTO contractors(site_id,name) VALUES($1,$2) ON CONFLICT(site_id,name) DO UPDATE SET active=true RETURNING *',[sid,name]));
+}catch(e){next(e)}});
+app.get('/api/v8/site-context',auth,async(req,res,next)=>{try{
+ const sid=Number(req.query.site_id),role=await siteRole(req,sid);
+ if(!role)return res.status(403).json({error:'현장 권한 없음'});
+ const scope=await companyScope(req,sid);
+ res.json({site_id:sid,role,contractor_id:scope.contractor_id,company_required:scope.restricted});
+}catch(e){next(e)}});
+app.get('/api/v8/site-users',auth,async(req,res,next)=>{try{
+ const sid=Number(req.query.site_id);if(!(await can(req,sid,['MANAGER'])))return res.status(403).json({error:'현장 관리자 권한 필요'});
+ res.json(await q(`SELECT u.id,u.name,u.username,u.email,m.role,cm.contractor_id,c.name contractor_name
+ FROM memberships m JOIN users u ON u.id=m.user_id AND u.active=true
+ LEFT JOIN contractor_memberships cm ON cm.user_id=u.id AND cm.site_id=m.site_id
+ LEFT JOIN contractors c ON c.id=cm.contractor_id WHERE m.site_id=$1 ORDER BY c.name NULLS FIRST,u.name`,[sid]));
+}catch(e){next(e)}});
+app.put('/api/v8/contractor-members/:userId',auth,async(req,res,next)=>{try{
+ const sid=Number(req.body.site_id),uid=Number(req.params.userId),cid=Number(req.body.contractor_id)||null;
+ if(!(await can(req,sid,['MANAGER'])))return res.status(403).json({error:'현장 관리자 권한 필요'});
+ const target=await one('SELECT m.role,u.role global_role FROM memberships m JOIN users u ON u.id=m.user_id WHERE m.site_id=$1 AND m.user_id=$2',[sid,uid]);
+ if(!target||target.role!=='USER'||target.global_role==='ADMIN')return res.status(400).json({error:'현장 일반 사용자에게만 협력업체를 지정할 수 있습니다.'});
+ if(cid&&!await one('SELECT id FROM contractors WHERE id=$1 AND site_id=$2 AND active=true',[cid,sid]))return res.status(400).json({error:'해당 현장의 협력업체가 아닙니다.'});
+ if(cid)await pool.query(`INSERT INTO contractor_memberships(user_id,site_id,contractor_id,assigned_by) VALUES($1,$2,$3,$4)
+ ON CONFLICT(user_id,site_id) DO UPDATE SET contractor_id=EXCLUDED.contractor_id,assigned_by=EXCLUDED.assigned_by,assigned_at=now()`,[uid,sid,cid,req.session.userId]);
+ else await pool.query('DELETE FROM contractor_memberships WHERE user_id=$1 AND site_id=$2',[uid,sid]);
+ res.json({ok:true});
+}catch(e){next(e)}});
+app.get('/api/v8/contractors/summary',auth,async(req,res,next)=>{try{
+ const sid=Number(req.query.site_id),start=String(req.query.week_start||'');
+ if(!(await can(req,sid,['MANAGER'])))return res.status(403).json({error:'현장 관리자 권한 필요'});
+ if(!validMonday(start))return res.status(400).json({error:'월요일을 선택하세요.'});
+ res.json(await q(`SELECT c.id,c.name,
+ (SELECT count(*)::int FROM contractor_memberships cm WHERE cm.site_id=$1 AND cm.contractor_id=c.id) user_count,
+ (SELECT count(*)::int FROM risks r WHERE r.site_id=$1 AND r.contractor_id=c.id AND r.deleted_at IS NULL AND COALESCE(r.period_start,r.risk_date)<($2::date+7) AND COALESCE(r.period_end,r.period_start,r.risk_date)>=$2::date) risk_count,
+ (SELECT count(*)::int FROM tbms t WHERE t.site_id=$1 AND t.contractor_id=c.id AND t.deleted_at IS NULL AND t.tbm_date >= $2::date AND t.tbm_date<($2::date+7)) tbm_count,
+ (SELECT count(*)::int FROM actions a WHERE a.site_id=$1 AND a.contractor_id=c.id AND a.deleted_at IS NULL AND a.status<>'DONE') open_actions,
+ w.submitted_at,w.entry_mode,u.name submitted_by_name
+ FROM contractors c LEFT JOIN weekly_contractor_submissions w ON w.site_id=c.site_id AND w.contractor_id=c.id AND w.week_start=$2::date
+ LEFT JOIN users u ON u.id=w.submitted_by WHERE c.site_id=$1 AND c.active=true ORDER BY c.name`,[sid,start]));
+}catch(e){next(e)}});
+app.post('/api/v6/actions/:id/verify',auth,async(req,res,next)=>{try{
+ const a=await one('SELECT * FROM actions WHERE id=$1 AND deleted_at IS NULL',[req.params.id]);
+ if(!a)return res.status(404).json({error:'지적사항 없음'});
+ if(!(await can(req,a.site_id,['MANAGER'])))return res.status(403).json({error:'현장 관리자 권한 필요'});
+ if(a.status!=='DONE')return res.status(409).json({error:'먼저 조치 완료 처리가 필요합니다'});
+ res.json(await one('UPDATE actions SET verified_by=$1,verified_at=now() WHERE id=$2 RETURNING *',[req.session.userId,a.id]));
+}catch(e){next(e)}});
+app.post('/api/v8/weekly/ready',auth,async(req,res,next)=>{try{
+ const sid=Number(req.body.site_id),start=String(req.body.week_start||'');
+ if(!validMonday(start)||!(await can(req,sid)))return res.status(400).json({error:'현장과 주차를 확인하세요.'});
+ const scope=await companyScope(req,sid),cid=scope.restricted?scope.contractor_id:Number(req.body.contractor_id);
+ if(!cid)return res.status(400).json({error:'소속 협력업체를 지정해야 합니다.'});
+ if(!await one('SELECT id FROM contractors WHERE id=$1 AND site_id=$2 AND active=true',[cid,sid]))return res.status(400).json({error:'해당 현장 업체가 아닙니다.'});
+ if(await one("SELECT id FROM weekly_risk_reviews WHERE site_id=$1 AND week_start=$2 AND status IN ('PENDING','APPROVED')",[sid,start]))return res.status(409).json({error:'상신 중이거나 승인된 주차입니다.'});
+ if(!await one(`SELECT id FROM risks WHERE site_id=$1 AND contractor_id=$2 AND deleted_at IS NULL AND COALESCE(period_start,risk_date)<($3::date+7) AND COALESCE(period_end,period_start,risk_date)>=$3::date LIMIT 1`,[sid,cid,start]))return res.status(409).json({error:'해당 주차에 업체 위험요인을 먼저 작성하세요.'});
+ const row=await one(`INSERT INTO weekly_contractor_submissions(site_id,week_start,contractor_id,submitted_by,entry_mode)
+ VALUES($1,$2,$3,$4,$5) ON CONFLICT(site_id,week_start,contractor_id) DO UPDATE SET submitted_by=EXCLUDED.submitted_by,entry_mode=EXCLUDED.entry_mode,submitted_at=now() RETURNING *`,
+ [sid,start,cid,req.session.userId,scope.restricted?'DIRECT':'PROXY']);res.json(row);
+}catch(e){next(e)}});
+app.get('/api/v7/weekly',auth,async(req,res,next)=>{try{
+ const sid=Number(req.query.site_id),scope=await companyScope(req,sid);
+ if(!scope.allowed)return res.status(403).json({error:'현장 접근 권한이 없습니다.'});
+ const rows=await q(`SELECT w.id,w.site_id,w.week_start,w.meeting_notes,w.attendees,w.meeting_date,w.status,w.revision,w.submitted_at,w.approved_at,w.decision_comment,w.snapshot_hash,
+ u.name submitted_by_name,a.name approved_by_name,jsonb_array_length(COALESCE(w.snapshot,'[]'::jsonb)) item_count
+ FROM weekly_risk_reviews w LEFT JOIN users u ON u.id=w.submitted_by LEFT JOIN users a ON a.id=w.approved_by
+ WHERE w.site_id=$1 AND ($2::int IS NULL OR EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(w.snapshot,'[]'::jsonb)) v WHERE v->>'contractor_id'=$2::text)) ORDER BY w.week_start DESC LIMIT 200`,[sid,scope.restricted?scope.contractor_id||-1:null]);
+ res.json(rows);
+}catch(e){next(e)}});
+app.get('/api/v7/weekly/preview',auth,async(req,res,next)=>{try{
+ const sid=Number(req.query.site_id),start=String(req.query.week_start||''),scope=await companyScope(req,sid);
+ if(!scope.allowed)return res.status(403).json({error:'현장 접근 권한이 없습니다.'});
+ if(!validMonday(start))return res.status(400).json({error:'평가 시작일은 월요일이어야 합니다.'});
+ const rows=await q(weeklyRowsSql,[sid,start]);
+ res.json(scope.restricted?rows.filter(r=>r.contractor_id===scope.contractor_id):rows);
+}catch(e){next(e)}});
+app.post('/api/v7/weekly',auth,async(req,res,next)=>{try{
+ const sid=Number(req.body.site_id),start=String(req.body.week_start||''),meeting=String(req.body.meeting_notes||'').slice(0,4000),attendees=String(req.body.attendees||'').slice(0,2000);
+ const meetingDate=String(req.body.meeting_date||'').slice(0,10)||null;
+ if(!(await can(req,sid,['MANAGER'])))return res.status(403).json({error:'현장관리자 권한이 필요합니다.'});
+ if(!validMonday(start)||meetingDate&&!/^\d{4}-\d{2}-\d{2}$/.test(meetingDate))return res.status(400).json({error:'주차 또는 회의일 형식을 확인하세요.'});
+ const client=await pool.connect();try{await client.query('BEGIN');
+ const old=(await client.query('SELECT * FROM weekly_risk_reviews WHERE site_id=$1 AND week_start=$2 FOR UPDATE',[sid,start])).rows[0];
+ if(old&&old.status!=='REJECTED'){await client.query('ROLLBACK');return res.status(409).json({error:'이미 상신 또는 승인된 주차입니다. 반려된 평가서만 재상신할 수 있습니다.'})}
+ const items=(await client.query(weeklyRowsSql,[sid,start])).rows;
+ if(!items.length){await client.query('ROLLBACK');return res.status(400).json({error:'해당 주차에 적용되는 위험성평가가 없습니다.'})}
+ const companies=(await client.query(`SELECT DISTINCT r.contractor_id,c.name FROM risks r JOIN contractors c ON c.id=r.contractor_id
+ WHERE r.site_id=$1 AND r.deleted_at IS NULL AND COALESCE(r.period_start,r.risk_date)<($2::date+7)
+ AND COALESCE(r.period_end,r.period_start,r.risk_date)>=$2::date AND NOT EXISTS
+ (SELECT 1 FROM weekly_contractor_submissions ws WHERE ws.site_id=$1 AND ws.week_start=$2::date AND ws.contractor_id=r.contractor_id)`,[sid,start])).rows;
+ if(companies.length&&!req.body.confirm_incomplete){await client.query('ROLLBACK');return res.status(409).json({error:'업체 제출 확인이 안 된 곳이 있습니다: '+companies.map(c=>c.name).join(', '),unsubmitted_companies:companies.map(c=>c.name)})}
+ const snapshot=JSON.stringify(items.map(r=>({...r,risk_date:isoDate(r.risk_date),period_start:isoDate(r.period_start),period_end:isoDate(r.period_end)})));
+ const hash=crypto.createHash('sha256').update(snapshot).digest('hex');
+ let w,revision=1;
+ if(old){revision=Number(old.revision)+1;
+  w=(await client.query(`UPDATE weekly_risk_reviews SET status='PENDING',revision=$2,snapshot=$3::jsonb,snapshot_hash=$4,
+  meeting_notes=$5,attendees=$6,meeting_date=$7,submitted_by=$8,submitted_at=now(),approved_by=NULL,approved_at=NULL,decision_comment=NULL,locked_at=NULL WHERE id=$1 RETURNING *`,
+  [old.id,revision,snapshot,hash,meeting,attendees,meetingDate,req.session.userId])).rows[0];
+  await client.query('DELETE FROM weekly_risk_items WHERE weekly_id=$1',[old.id]);
+ }else{
+  w=(await client.query(`INSERT INTO weekly_risk_reviews(site_id,week_start,meeting_notes,attendees,meeting_date,status,submitted_by,submitted_at,snapshot,snapshot_hash)
+  VALUES($1,$2,$3,$4,$5,'PENDING',$6,now(),$7::jsonb,$8) RETURNING *`,[sid,start,meeting,attendees,meetingDate,req.session.userId,snapshot,hash])).rows[0];
+ }
+ for(const item of items)await client.query('INSERT INTO weekly_risk_items(weekly_id,risk_id) VALUES($1,$2)',[w.id,item.id]);
+ await client.query(`INSERT INTO weekly_risk_revisions(weekly_id,revision,snapshot,snapshot_hash,meeting_notes,attendees,meeting_date,submitted_by) VALUES($1,$2,$3::jsonb,$4,$5,$6,$7,$8)`,[w.id,revision,snapshot,hash,meeting,attendees,meetingDate,req.session.userId]);
+ await client.query(`INSERT INTO weekly_risk_events(weekly_id,revision,action,actor_id,comment) VALUES($1,$2,'SUBMIT',$3,$4)`,[w.id,revision,req.session.userId,companies.length?'미확인 업체 포함: '+companies.map(c=>c.name).join(', '):'']);
+ await client.query('COMMIT');res.json({...w,item_count:items.length});
+ }catch(e){await client.query('ROLLBACK');if(e.code==='23505')return res.status(409).json({error:'동일 주차가 이미 상신되었습니다.'});throw e}finally{client.release()}
+}catch(e){next(e)}});
+app.get('/api/v7/weekly/:id/items',auth,async(req,res,next)=>{try{
+ const w=await one('SELECT site_id,snapshot FROM weekly_risk_reviews WHERE id=$1',[req.params.id]);
+ if(!w)return res.status(404).json({error:'평가서를 찾을 수 없습니다.'});
+ const scope=await companyScope(req,w.site_id);if(!scope.allowed)return res.status(404).json({error:'평가서를 찾을 수 없습니다.'});
+ const items=Array.isArray(w.snapshot)?w.snapshot:[];
+ res.json(scope.restricted?items.filter(r=>Number(r.contractor_id)===scope.contractor_id):items);
+}catch(e){next(e)}});
+app.get('/api/v8/weekly/:id/revisions',auth,async(req,res,next)=>{try{
+ const w=await one('SELECT site_id,snapshot FROM weekly_risk_reviews WHERE id=$1',[req.params.id]);
+ if(!w||!(await can(req,w.site_id)))return res.status(404).json({error:'평가서를 찾을 수 없습니다.'});
+ const scope=await companyScope(req,w.site_id);
+ if(scope.restricted&&!(Array.isArray(w.snapshot)&&w.snapshot.some(r=>Number(r.contractor_id)===scope.contractor_id)))return res.status(404).json({error:'해당 업체의 평가서가 없습니다.'});
+ res.json(await q(`SELECT revision,snapshot_hash,meeting_date,submitted_at,jsonb_array_length(snapshot) item_count FROM weekly_risk_revisions WHERE weekly_id=$1 ORDER BY revision DESC`,[req.params.id]));
+}catch(e){next(e)}});
+app.get('/api/v8/weekly/:id/events',auth,async(req,res,next)=>{try{
+ const w=await one('SELECT site_id FROM weekly_risk_reviews WHERE id=$1',[req.params.id]);
+ if(!w||!(await can(req,w.site_id)))return res.status(404).json({error:'평가서를 찾을 수 없습니다.'});
+ const scope=await companyScope(req,w.site_id);if(scope.restricted&&!await one("SELECT id FROM weekly_risk_reviews WHERE id=$1 AND EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(snapshot,'[]'::jsonb)) v WHERE v->>'contractor_id'=$2::text)",[req.params.id,scope.contractor_id||-1]))return res.status(404).json({error:'평가서를 찾을 수 없습니다.'});
+ res.json(await q('SELECT e.revision,e.action,e.comment,e.created_at,u.name actor_name FROM weekly_risk_events e LEFT JOIN users u ON u.id=e.actor_id WHERE e.weekly_id=$1 ORDER BY e.id',[req.params.id]));
+}catch(e){next(e)}});
+app.post('/api/v7/weekly/:id/decision',auth,async(req,res,next)=>{try{
+ const action=String(req.body.action),comment=String(req.body.comment||'').trim().slice(0,1000);
+ if(!['APPROVE','REJECT'].includes(action)||action==='REJECT'&&!comment)return res.status(400).json({error:'승인 또는 반려를 선택하고 반려 사유를 입력하세요.'});
+ const client=await pool.connect();try{await client.query('BEGIN');
+ const w=(await client.query('SELECT * FROM weekly_risk_reviews WHERE id=$1 FOR UPDATE',[req.params.id])).rows[0];
+ if(!w||!(await can(req,w.site_id,['MANAGER']))){await client.query('ROLLBACK');return res.status(403).json({error:'현장 결재 권한이 없습니다.'})}
+ if(w.status!=='PENDING'){await client.query('ROLLBACK');return res.status(409).json({error:'이미 처리된 평가서입니다.'})}
+ const updated=(await client.query(`UPDATE weekly_risk_reviews SET status=$2,approved_by=$3,approved_at=CASE WHEN $2='APPROVED' THEN now() ELSE NULL END,
+ locked_at=CASE WHEN $2='APPROVED' THEN now() ELSE NULL END,decision_comment=$4 WHERE id=$1 RETURNING *`,
+ [w.id,action==='APPROVE'?'APPROVED':'REJECTED',req.session.userId,comment])).rows[0];
+ await client.query('INSERT INTO weekly_risk_events(weekly_id,revision,action,actor_id,comment) VALUES($1,$2,$3,$4,$5)',[w.id,w.revision,action,req.session.userId,comment]);
+ await client.query('COMMIT');res.json(updated);
+ }catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}
+}catch(e){next(e)}});
+app.get('/api/v8/weekly/:id/report',auth,async(req,res,next)=>{try{
+ const w=await one(`SELECT w.*,s.name site_name,u.name submitted_by_name,a.name approved_by_name FROM weekly_risk_reviews w
+ JOIN sites s ON s.id=w.site_id LEFT JOIN users u ON u.id=w.submitted_by LEFT JOIN users a ON a.id=w.approved_by WHERE w.id=$1`,[req.params.id]);
+ if(!w||!(await can(req,w.site_id)))return res.status(404).send('평가서를 찾을 수 없습니다.');
+ const scope=await companyScope(req,w.site_id);
+ const requestedRevision=Number(req.query.revision)||w.revision;
+ const rev=await one('SELECT * FROM weekly_risk_revisions WHERE weekly_id=$1 AND revision=$2',[w.id,requestedRevision]);
+ if(!rev)return res.status(404).send('해당 차수의 평가서가 없습니다.');
+ const items=(Array.isArray(rev.snapshot)?rev.snapshot:[]).filter(r=>!scope.restricted||Number(r.contractor_id)===scope.contractor_id);
+ if(scope.restricted&&!items.length)return res.status(404).send('해당 업체의 평가서가 없습니다.');
+ const currentRevision=Number(rev.revision)===Number(w.revision);
+ const h=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+ const datestr=x=>h(isoDate(x));
+ const body=items.map((r,i)=>`<tr><td>${i+1}</td><td>${h(r.contractor_name||'미지정')}</td><td>${h(r.author_name||'-')}</td><td>${h(r.area)}</td><td>${h(r.work)}</td><td>${h(r.hazard)}</td><td>${h(r.frequency)}×${h(r.severity)}=${h(r.score)}</td><td>${h(r.measure)}</td></tr>`).join('');
+ res.set({'Content-Type':'text/html; charset=utf-8','Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'}).send(`<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>${h(w.site_name)} 주간 위험성평가 ${datestr(w.week_start)}</title><style>body{font-family:'Malgun Gothic',Arial,sans-serif;color:#1e293b;padding:24px}table{width:100%;border-collapse:collapse;font-size:11px}th,td{border:1px solid #94a3b8;padding:6px;vertical-align:top;word-break:break-all}th{background:#e2e8f0}h1{font-size:22px}.meta{line-height:1.9}.note{white-space:pre-wrap;border:1px solid #cbd5e1;padding:10px}@media print{button{display:none}@page{size:A4 landscape;margin:12mm}body{padding:0}}</style></head><body><h1>주간 통합 위험성평가서</h1><div class="meta">현장: ${h(w.site_name)}<br>평가 주차: ${datestr(w.week_start)} ~ ${datestr(new Date(new Date(w.week_start).getTime()+6*86400000))}<br>회의일: ${datestr(rev.meeting_date)||'-'} · 참석자: ${h(rev.attendees)||'-'}<br>상신자: ${h(w.submitted_by_name)||'-'} · 최종 승인자: ${currentRevision?h(w.approved_by_name)||'-':'과거 차수 (현재 승인 정보와 별개)'} · 승인일: ${currentRevision?datestr(w.approved_at)||'-':'-'}<br>상태: ${currentRevision?h(w.status):'과거 차수 보관본'} · 차수: ${h(rev.revision)} · 평가 항목: ${items.length}건</div><h3>회의 및 검토 내용</h3><div class="note">${h(rev.meeting_notes)}</div><h3>주간 위험요인 통합 목록</h3><table><thead><tr><th>No.</th><th>협력업체</th><th>작성자</th><th>구역</th><th>작업</th><th>위험요인</th><th>빈도×강도</th><th>감소대책</th></tr></thead><tbody>${body}</tbody></table><p>승인 당시 평가 항목 스냅샷을 출력한 조회용 보고서입니다. 인쇄 대화상자에서 PDF로 저장할 수 있습니다. 법정 전자서명 또는 별도 법정 서식을 대체하지 않습니다. 기존 V7 이전 평가서의 최초 스냅샷은 업그레이드 당시 보존된 내용일 수 있습니다.</p><button onclick="window.print()">인쇄 / PDF 저장</button></body></html>`);
+}catch(e){next(e)}});
+// TBM: separate site-manager approval queue, independent of weekly risk approval.
+app.post('/api/v8/tbm/:id/submit',auth,async(req,res,next)=>{try{
+ const t=await one('SELECT * FROM tbms WHERE id=$1 AND deleted_at IS NULL',[req.params.id]);
+ if(!t||!(await recordCompanyAllowed(req,'tbm',t.id,t.site_id)))return res.status(404).json({error:'TBM을 찾을 수 없습니다.'});
+ const prev=await one("SELECT status FROM record_approvals WHERE record_type='tbm' AND record_id=$1",[t.id]);
+ if(prev&&['SUBMITTED','APPROVED'].includes(prev.status))return res.status(409).json({error:'이미 결재 요청 또는 승인된 TBM입니다.'});
+ const row=await one(`INSERT INTO record_approvals(record_type,record_id,site_id,status,comment,updated_at) VALUES('tbm',$1,$2,'SUBMITTED','',now())
+ ON CONFLICT(record_type,record_id) DO UPDATE SET status='SUBMITTED',reviewer_id=NULL,comment='',updated_at=now() RETURNING *`,[t.id,t.site_id]);await pool.query("INSERT INTO tbm_approval_events(tbm_id,site_id,action,actor_id) VALUES($1,$2,'SUBMITTED',$3)",[t.id,t.site_id,req.session.userId]);res.json(row);
+}catch(e){next(e)}});
+app.post('/api/v8/tbm/:id/decision',auth,async(req,res,next)=>{try{
+ const t=await one('SELECT * FROM tbms WHERE id=$1 AND deleted_at IS NULL',[req.params.id]);
+ if(!t||!(await can(req,t.site_id,['MANAGER'])))return res.status(403).json({error:'현장 관리자 결재 권한이 필요합니다.'});
+ const action=String(req.body.action),comment=String(req.body.comment||'').trim().slice(0,1000);
+ if(!['APPROVED','REJECTED'].includes(action)||action==='REJECTED'&&!comment)return res.status(400).json({error:'승인/반려 및 사유를 확인하세요.'});
+ const row=await one(`UPDATE record_approvals SET status=$1,reviewer_id=$2,comment=$3,updated_at=now()
+ WHERE record_type='tbm' AND record_id=$4 AND status='SUBMITTED' RETURNING *`,[action,req.session.userId,comment,t.id]);
+ if(!row)return res.status(409).json({error:'결재 대기 중인 TBM이 아닙니다.'});await pool.query('INSERT INTO tbm_approval_events(tbm_id,site_id,action,actor_id,comment) VALUES($1,$2,$3,$4,$5)',[t.id,t.site_id,action,req.session.userId,comment]);res.json(row);
+}catch(e){next(e)}});
 app.get("/api/risks",auth,async(req,res)=>{
  const sid=Number(req.query.site_id);if(!(await can(req,sid)))return res.status(403).json({error:"현장 권한이 없습니다."});
- res.json(await q("SELECT r.*,u.name author_name,c.name contractor_name,ac.status approval_status FROM risks r LEFT JOIN users u ON u.id=r.author_id LEFT JOIN contractors c ON c.id=r.contractor_id LEFT JOIN approval_cases ac ON ac.record_type='risk' AND ac.record_id=r.id WHERE r.site_id=$1 AND r.deleted_at IS NULL ORDER BY r.id DESC",[sid]));
+ const scope=await companyScope(req,sid);
+ res.json(await q(`SELECT r.*,u.name author_name,c.name contractor_name FROM risks r LEFT JOIN users u ON u.id=r.author_id LEFT JOIN contractors c ON c.id=r.contractor_id
+ WHERE r.site_id=$1 AND r.deleted_at IS NULL AND ($2::int IS NULL OR r.contractor_id=$2) ORDER BY r.id DESC`,[sid,scope.restricted?scope.contractor_id||-1:null]));
 });
 app.post("/api/risks",auth,async(req,res)=>{
  const sid=Number(req.body.site_id);if(!(await can(req,sid)))return res.status(403).json({error:"현장 권한이 없습니다."});
  if(req.body.period_start&&req.body.period_end&&req.body.period_start>req.body.period_end)return res.status(400).json({error:"적용 시작일이 종료일보다 늦습니다."});
  const s=await one("SELECT * FROM settings WHERE site_id=$1",[sid])||{low_max:3,medium_max:5};
  if(req.body.contractor_id&&!await one('SELECT id FROM contractors WHERE id=$1 AND site_id=$2 AND active=true',[req.body.contractor_id,sid]))return res.status(400).json({error:'현장 협력업체를 선택하세요'});
- if(req.body.entry_mode==='PROXY'&&!(await can(req,sid,['ADMIN','MANAGER'])))return res.status(403).json({error:'원청 대리 작성은 관리자 권한이 필요합니다'});
+ const scope=await companyScope(req,sid);
+ if(scope.restricted&&!scope.contractor_id)return res.status(403).json({error:'현장관리자에게 소속 협력업체 지정을 요청하세요.'});
+ if(scope.restricted&&req.body.contractor_id&&Number(req.body.contractor_id)!==scope.contractor_id)return res.status(403).json({error:'다른 업체로 작성할 수 없습니다.'});
+ if(req.body.entry_mode==='PROXY'&&scope.restricted)return res.status(403).json({error:'원청 대리 작성은 현장관리자만 가능합니다.'});
+ const contractorId=scope.restricted?scope.contractor_id:Number(req.body.contractor_id)||null;
+ const entryMode=scope.restricted?'DIRECT':contractorId?'PROXY':'DIRECT';
  const r=riskCalc(req.body.frequency,req.body.severity,s),u=await user(req);
  const x=await one(`INSERT INTO risks(site_id,risk_date,area,work,hazard,frequency,severity,score,level,measure,author_id,period_start,period_end,contractor_id,entry_mode)
  VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *`,
- [sid,req.body.date||null,req.body.area,req.body.work,req.body.hazard,r.frequency,r.severity,r.score,r.level,req.body.measure,u.id,req.body.period_start||null,req.body.period_end||null,req.body.contractor_id||null,req.body.entry_mode==='PROXY'?'PROXY':'DIRECT']);
+ [sid,req.body.date||null,req.body.area,req.body.work,req.body.hazard,r.frequency,r.severity,r.score,r.level,req.body.measure,u.id,req.body.period_start||null,req.body.period_end||null,contractorId,entryMode]);
  res.json(x);
 });
 
 // 비공개 R2 사진: 업로드 및 열람 시 반드시 로그인과 현장 권한 검사
 async function photoRecord(type,id){
  if(!["risk","tbm","action"].includes(type)||!Number.isSafeInteger(Number(id))||Number(id)<1)return null;
- return one(`SELECT id,site_id FROM ${({risk:"risks",tbm:"tbms",action:"actions"})[type]} WHERE id=$1`,[id]);
+ return one(`SELECT id,site_id FROM ${({risk:"risks",tbm:"tbms",action:"actions"})[type]} WHERE id=$1 AND deleted_at IS NULL`,[id]);
 }
 app.get("/api/photos/status",auth,(req,res)=>res.json({configured:r2Ready()}));
 app.get("/api/photos",auth,async(req,res,next)=>{try{
  const record=await photoRecord(req.query.type,req.query.id);
- if(!record||!(await can(req,record.site_id)))return res.status(404).json({error:"기록을 찾을 수 없습니다."});
+ if(!record||!(await recordCompanyAllowed(req,req.query.type,record.id,record.site_id)))return res.status(404).json({error:"기록을 찾을 수 없습니다."});
  res.json(await q("SELECT id,original_name,mime_type,byte_size,created_at,photo_stage FROM record_photos WHERE record_type=$1 AND record_id=$2 AND deleted_at IS NULL ORDER BY id",[req.query.type,record.id]));
 }catch(e){next(e)}});
 app.post("/api/photos",auth,(req,res,next)=>photoUpload.array("photos",5)(req,res,e=>e?res.status(400).json({error:e.message}):next()),async(req,res,next)=>{try{
  const type=String(req.body.type||""),record=await photoRecord(type,req.body.id);
  const stage=type==="action"&&req.body.stage==="before"?"before":type==="action"&&req.body.stage==="after"?"after":"general";
- if(!record||!(await can(req,record.site_id)))return res.status(404).json({error:"기록을 찾을 수 없습니다."});
+ if(!record||!(await recordCompanyAllowed(req,type,record.id,record.site_id)))return res.status(404).json({error:"기록을 찾을 수 없습니다."});
  if(!r2Ready())return res.status(503).json({error:"사진 저장소가 연결되지 않았습니다. Render 환경변수에 R2 정보를 설정하세요."});
  if(!req.files?.length)return res.status(400).json({error:"JPG, PNG, WEBP 사진을 선택하세요. (한 번에 최대 5장, 장당 8MB)"});
  const uploaded=[];
@@ -346,7 +640,7 @@ app.post("/api/photos",auth,(req,res,next)=>photoUpload.array("photos",5)(req,re
 }catch(e){next(e)}});
 app.get("/api/photos/:id/view",auth,async(req,res,next)=>{try{
  const f=await one("SELECT * FROM record_photos WHERE id=$1",[req.params.id]);
- if(!f||f.deleted_at||!(await can(req,f.site_id)))return res.status(404).json({error:"사진을 찾을 수 없습니다."});
+ if(!f||f.deleted_at||!(await recordCompanyAllowed(req,f.record_type,f.record_id,f.site_id)))return res.status(404).json({error:"사진을 찾을 수 없습니다."});
  if(!r2Ready())return res.status(503).json({error:"사진 저장소가 연결되지 않았습니다."});
  const obj=await r2().send(new GetObjectCommand({Bucket:bucket(),Key:f.object_key}));
  res.set({"Content-Type":f.mime_type,"Cache-Control":"private, no-store","X-Content-Type-Options":"nosniff","Content-Disposition":`inline; filename="photo.${f.mime_type.split('/')[1]}"`});
@@ -354,7 +648,7 @@ app.get("/api/photos/:id/view",auth,async(req,res,next)=>{try{
 }catch(e){next(e)}});
 app.get("/api/photos/:id/download",auth,async(req,res,next)=>{try{
  const f=await one("SELECT * FROM record_photos WHERE id=$1",[req.params.id]);
- if(!f||f.deleted_at||!(await can(req,f.site_id)))return res.status(404).json({error:"사진을 찾을 수 없습니다."});
+ if(!f||f.deleted_at||!(await recordCompanyAllowed(req,f.record_type,f.record_id,f.site_id)))return res.status(404).json({error:"사진을 찾을 수 없습니다."});
  if(!r2Ready())return res.status(503).json({error:"사진 저장소 연결이 필요합니다."});
  const obj=await r2().send(new GetObjectCommand({Bucket:bucket(),Key:f.object_key}));
  const name=encodeURIComponent(f.original_name.replace(/[\r\n]/g,""));
@@ -367,20 +661,23 @@ app.get("/api/photo-library",auth,async(req,res,next)=>{try{
  if(!all&&!(await can(req,sid)))return res.status(403).json({error:"현장 권한이 없습니다."});
  const from=String(req.query.from||""),to=String(req.query.to||"");
  const type=String(req.query.type||"all");
+ const scope=all?{restricted:false}:await companyScope(req,sid);
  const params=[];let where="WHERE 1=1";
  if(!all){params.push(sid);where+=` AND p.site_id=$${params.length}`}
+ if(scope.restricted){params.push(scope.contractor_id||-1);where+=` AND ((p.record_type='risk' AND EXISTS(SELECT 1 FROM risks rr WHERE rr.id=p.record_id AND rr.contractor_id=$${params.length})) OR (p.record_type='tbm' AND EXISTS(SELECT 1 FROM tbms tt WHERE tt.id=p.record_id AND tt.contractor_id=$${params.length})) OR (p.record_type='action' AND EXISTS(SELECT 1 FROM actions aa WHERE aa.id=p.record_id AND aa.contractor_id=$${params.length})))`;}
  if(from){params.push(from);where+=` AND p.created_at::date >= $${params.length}::date`}
  if(to){params.push(to);where+=` AND p.created_at::date <= $${params.length}::date`}
  if(type!=="all"){if(!["risk","tbm","action","custom"].includes(type))return res.status(400).json({error:"사진 유형 오류"});if(type!=="custom"){params.push(type);where+=` AND p.record_type=$${params.length}`}}
  const regular=type==="custom"?[]:await q(`SELECT p.id,p.record_type,p.record_id,p.original_name,p.mime_type,p.byte_size,p.created_at,p.photo_stage,s.name site_name,p.site_id,u.name uploader_name,
- CASE p.record_type WHEN 'risk' THEN (SELECT r.work FROM risks r WHERE r.id=p.record_id) WHEN 'tbm' THEN (SELECT t.work_name FROM tbms t WHERE t.id=p.record_id) ELSE (SELECT a.item FROM actions a WHERE a.id=p.record_id) END source_title,
+ CASE p.record_type WHEN 'risk' THEN (SELECT r.work FROM risks r WHERE r.id=p.record_id) WHEN 'tbm' THEN (SELECT t.work_name FROM tbms t WHERE t.id=p.record_id) ELSE (SELECT COALESCE(NULLIF(a.issue_text,''),a.item) FROM actions a WHERE a.id=p.record_id) END source_title,
  CASE p.record_type WHEN 'risk' THEN (SELECT r.risk_date FROM risks r WHERE r.id=p.record_id) WHEN 'tbm' THEN (SELECT t.tbm_date FROM tbms t WHERE t.id=p.record_id) ELSE (SELECT a.due_date FROM actions a WHERE a.id=p.record_id) END source_date
  FROM record_photos p JOIN sites s ON s.id=p.site_id LEFT JOIN users u ON u.id=p.uploaded_by ${where} AND p.deleted_at IS NULL ORDER BY p.created_at DESC,p.id DESC LIMIT 500`,params);
  const customParams=[];let cw="WHERE 1=1";
+ if(scope.restricted){customParams.push(scope.contractor_id||-1);cw+=` AND r.contractor_id=$${customParams.length}`;}
  if(!all){customParams.push(sid);cw+=` AND r.site_id=$${customParams.length}`}
  if(from){customParams.push(from);cw+=` AND p.created_at::date >= $${customParams.length}::date`}
  if(to){customParams.push(to);cw+=` AND p.created_at::date <= $${customParams.length}::date`}
- const custom=type!=="all"&&type!=="custom"?[]:await q(`SELECT p.id,'custom' record_type,r.id record_id,p.original_name,p.mime_type,p.byte_size,p.created_at,'general' photo_stage,s.name site_name,r.site_id, u.name uploader_name, f.title source_title,r.record_date source_date FROM custom_record_photos p JOIN custom_records r ON r.id=p.record_id JOIN sites s ON s.id=r.site_id LEFT JOIN users u ON u.id=r.created_by LEFT JOIN custom_forms f ON f.id=r.form_id ${cw} AND p.deleted_at IS NULL ORDER BY p.created_at DESC,p.id DESC LIMIT 500`,customParams);
+ const custom=type!=="all"&&type!=="custom"?[]:await q(`SELECT p.id,'custom' record_type,r.id record_id,p.original_name,p.mime_type,p.byte_size,p.created_at,'general' photo_stage,s.name site_name,r.site_id, u.name uploader_name, f.title source_title,r.record_date source_date FROM custom_record_photos p JOIN custom_records r ON r.id=p.record_id JOIN sites s ON s.id=r.site_id LEFT JOIN users u ON u.id=COALESCE(p.uploaded_by,r.created_by) LEFT JOIN custom_forms f ON f.id=r.form_id ${cw} AND p.deleted_at IS NULL ORDER BY p.created_at DESC,p.id DESC LIMIT 500`,customParams);
  res.json([...regular,...custom].sort((a,b)=>new Date(b.created_at)-new Date(a.created_at)).slice(0,500));
 }catch(e){next(e)}});
 // Storage totals are computed from photo metadata; this is not an R2 billing meter.
@@ -398,12 +695,17 @@ app.get("/api/photo-library/usage",auth,async(req,res,next)=>{try{
 app.get("/api/photo-library/export.zip",auth,async(req,res,next)=>{try{
  const u=await user(req),sid=String(req.query.site_id||""),all=sid==="all";
  if(!sid||all&&u.role!=="ADMIN"||!all&&!(await can(req,Number(sid))))return res.status(403).json({error:"현장 권한이 없습니다."});
+ const scope=all?{restricted:false}:await companyScope(req,Number(sid));
  if(!r2Ready())return res.status(503).json({error:"R2 저장소 연결이 필요합니다."});
  const type=String(req.query.type||"all"),from=String(req.query.from||""),to=String(req.query.to||"");
  if(!["all","risk","tbm","action","custom"].includes(type))return res.status(400).json({error:"종류 오류"});
  if([from,to].some(v=>v&&!/^\d{4}-\d{2}-\d{2}$/.test(v)))return res.status(400).json({error:"날짜 형식 오류"});
  const args=[];let wp="WHERE 1=1",wc="WHERE 1=1";
  if(!all){args.push(Number(sid));wp+=` AND p.site_id=$${args.length}`;wc+=` AND r.site_id=$${args.length}`}
+ if(scope.restricted){args.push(scope.contractor_id||-1);
+  wp+=` AND ((p.record_type='risk' AND EXISTS(SELECT 1 FROM risks rr WHERE rr.id=p.record_id AND rr.contractor_id=$${args.length})) OR (p.record_type='tbm' AND EXISTS(SELECT 1 FROM tbms tt WHERE tt.id=p.record_id AND tt.contractor_id=$${args.length})) OR (p.record_type='action' AND EXISTS(SELECT 1 FROM actions aa WHERE aa.id=p.record_id AND aa.contractor_id=$${args.length})))`;
+  wc+=` AND r.contractor_id=$${args.length}`;
+ }
  if(from){args.push(from);wp+=` AND p.created_at::date >= $${args.length}::date`;wc+=` AND cp.created_at::date >= $${args.length}::date`}
  if(to){args.push(to);wp+=` AND p.created_at::date <= $${args.length}::date`;wc+=` AND cp.created_at::date <= $${args.length}::date`}
  const photos=type==="custom"?[]:await q(`SELECT p.object_key,p.original_name,p.byte_size,p.record_type,p.record_id,p.photo_stage,s.name site_name,p.id FROM record_photos p JOIN sites s ON s.id=p.site_id ${wp} AND p.deleted_at IS NULL ${type!=="all"?` AND p.record_type='${type}'`:""} ORDER BY p.id LIMIT 501`,args);
@@ -446,33 +748,53 @@ app.post("/api/templates",auth,async(req,res)=>{
 
 app.get("/api/actions",auth,async(req,res)=>{
  const sid=Number(req.query.site_id);if(!(await can(req,sid)))return res.status(403).json({error:"현장 권한이 없습니다."});
- res.json(await q("SELECT a.*,c.name contractor_name,u.name author_name FROM actions a LEFT JOIN contractors c ON c.id=a.contractor_id LEFT JOIN users u ON u.id=a.created_by WHERE a.deleted_at IS NULL AND a.site_id=$1 ORDER BY a.due_date NULLS LAST,a.id DESC",[sid]));
+ const scope=await companyScope(req,sid);
+ res.json(await q(`SELECT a.*,c.name contractor_name,u.name author_name FROM actions a LEFT JOIN contractors c ON c.id=a.contractor_id LEFT JOIN users u ON u.id=a.created_by
+ WHERE a.deleted_at IS NULL AND a.site_id=$1 AND ($2::int IS NULL OR a.contractor_id=$2) ORDER BY a.due_date NULLS LAST,a.id DESC`,[sid,scope.restricted?scope.contractor_id||-1:null]));
 });
 app.post("/api/actions",auth,async(req,res)=>{
  const sid=Number(req.body.site_id);if(!(await can(req,sid)))return res.status(403).json({error:"현장 권한이 없습니다."});
  if(req.body.contractor_id&&!await one("SELECT id FROM contractors WHERE id=$1 AND site_id=$2 AND active=true",[req.body.contractor_id,sid]))return res.status(400).json({error:"현장 협력업체를 선택하세요"});
+ const scope=await companyScope(req,sid);
+ if(scope.restricted)return res.status(403).json({error:'지적사항 등록은 원청 현장관리자만 가능합니다.'});
+ if(!String(req.body.issue_text||'').trim())return res.status(400).json({error:'지적사항 내용을 입력하세요.'});
+ if(req.body.risk_id&&!await one('SELECT id FROM risks WHERE id=$1 AND site_id=$2 AND deleted_at IS NULL',[req.body.risk_id,sid]))return res.status(400).json({error:'다른 현장의 위험성평가를 연결할 수 없습니다.'});
  res.json(await one(`INSERT INTO actions(site_id,risk_id,item,manager,due_date,issue_text,contractor_id,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
- [sid,req.body.risk_id||null,req.body.item,req.body.manager,req.body.due_date||null,req.body.issue_text||null,req.body.contractor_id||null,req.session.userId]));
+ [sid,req.body.risk_id||null,req.body.item,req.body.manager,req.body.due_date||null,req.body.issue_text.trim(),req.body.contractor_id||null,req.session.userId]));
 });
 app.patch("/api/actions/:id",auth,async(req,res)=>{
- const a=await one("SELECT * FROM actions WHERE id=$1",[req.params.id]);if(!a||!(await can(req,a.site_id)))return res.status(404).json({error:"조치사항을 찾을 수 없습니다."});
+ const a=await one("SELECT * FROM actions WHERE id=$1 AND deleted_at IS NULL",[req.params.id]);if(!a||!(await recordCompanyAllowed(req,'action',a.id,a.site_id)))return res.status(404).json({error:"조치사항을 찾을 수 없습니다."});
  const status=req.body.status||a.status;
- res.json(await one("UPDATE actions SET item=$1,manager=$2,due_date=$3,status=$4,completed_at=$5 WHERE id=$6 RETURNING *",
- [req.body.item??a.item,req.body.manager??a.manager,req.body.due_date??a.due_date,status,status==="DONE"?new Date():null,a.id]));
+ if(!['OPEN','DONE'].includes(status))return res.status(400).json({error:'조치 상태 오류'});
+ const scope=await companyScope(req,a.site_id);
+ if(scope.restricted&&(req.body.item!==undefined||req.body.manager!==undefined||req.body.due_date!==undefined||status!=='DONE'))return res.status(403).json({error:'협력업체는 조치 완료 요청만 할 수 있습니다.'});
+ res.json(await one(`UPDATE actions SET item=$1,manager=$2,due_date=$3,status=$4,completed_at=$5,
+ verified_by=CASE WHEN $4='OPEN' THEN NULL ELSE verified_by END,verified_at=CASE WHEN $4='OPEN' THEN NULL ELSE verified_at END WHERE id=$6 RETURNING *`,
+ [scope.restricted?a.item:req.body.item??a.item,scope.restricted?a.manager:req.body.manager??a.manager,scope.restricted?a.due_date:req.body.due_date??a.due_date,status,status==='DONE'?new Date():null,a.id]));
 });
 
 app.get("/api/tbms",auth,async(req,res)=>{
  const sid=Number(req.query.site_id);if(!(await can(req,sid)))return res.status(403).json({error:"현장 권한이 없습니다."});
- res.json(await q("SELECT t.*,r.work risk_work,u.name author_name,c.name contractor_name,ac.status approval_status FROM tbms t LEFT JOIN risks r ON r.id=t.risk_id LEFT JOIN users u ON u.id=t.created_by LEFT JOIN contractors c ON c.id=t.contractor_id LEFT JOIN approval_cases ac ON ac.record_type='tbm' AND ac.record_id=t.id WHERE t.site_id=$1 AND t.deleted_at IS NULL ORDER BY t.id DESC",[sid]));
+ const scope=await companyScope(req,sid);
+ res.json(await q(`SELECT t.*,r.work risk_work,u.name author_name,c.name contractor_name,ra.status approval_status
+ FROM tbms t LEFT JOIN risks r ON r.id=t.risk_id LEFT JOIN users u ON u.id=t.created_by
+ LEFT JOIN contractors c ON c.id=t.contractor_id LEFT JOIN record_approvals ra ON ra.record_type='tbm' AND ra.record_id=t.id
+ WHERE t.site_id=$1 AND t.deleted_at IS NULL AND ($2::int IS NULL OR t.contractor_id=$2) ORDER BY t.id DESC`,[sid,scope.restricted?scope.contractor_id||-1:null]));
 });
 app.post("/api/tbms",auth,async(req,res)=>{
  const sid=Number(req.body.site_id);if(!(await can(req,sid)))return res.status(403).json({error:"현장 권한이 없습니다."});
  if(req.body.contractor_id&&!await one('SELECT id FROM contractors WHERE id=$1 AND site_id=$2 AND active=true',[req.body.contractor_id,sid]))return res.status(400).json({error:'현장 협력업체를 선택하세요'});
- if(req.body.entry_mode==='PROXY'&&!(await can(req,sid,['ADMIN','MANAGER'])))return res.status(403).json({error:'원청 대리 작성은 관리자 권한이 필요합니다'});
+ const scope=await companyScope(req,sid);
+ if(scope.restricted&&!scope.contractor_id)return res.status(403).json({error:'현장관리자에게 소속 협력업체 지정을 요청하세요.'});
+ if(scope.restricted&&req.body.contractor_id&&Number(req.body.contractor_id)!==scope.contractor_id)return res.status(403).json({error:'다른 업체로 작성할 수 없습니다.'});
+ if(req.body.entry_mode==='PROXY'&&scope.restricted)return res.status(403).json({error:'원청 대리 작성은 현장관리자만 가능합니다.'});
+ const contractorId=scope.restricted?scope.contractor_id:Number(req.body.contractor_id)||null;
+ const entryMode=scope.restricted?'DIRECT':contractorId?'PROXY':'DIRECT';
+ if(req.body.risk_id&&!await one('SELECT id FROM risks WHERE id=$1 AND site_id=$2 AND deleted_at IS NULL AND ($3::int IS NULL OR contractor_id=$3)',[req.body.risk_id,sid,scope.restricted?scope.contractor_id:null]))return res.status(400).json({error:'연결할 위험성평가가 해당 현장/업체에 없습니다.'});
  const u=await user(req);
  res.json(await one(`INSERT INTO tbms(site_id,tbm_date,team,work_name,people,hazard,measure,risk_id,created_by,contractor_id,entry_mode)
  VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
- [sid,req.body.tbm_date||null,req.body.team,req.body.work_name,Number(req.body.people||0),req.body.hazard,req.body.measure,req.body.risk_id||null,u.id,req.body.contractor_id||null,req.body.entry_mode==='PROXY'?'PROXY':'DIRECT']));
+ [sid,req.body.tbm_date||null,req.body.team,req.body.work_name,Number(req.body.people||0),req.body.hazard,req.body.measure,req.body.risk_id||null,u.id,contractorId,entryMode]));
 });
 
 app.post("/api/sites",auth,async(req,res)=>{
@@ -571,10 +893,12 @@ app.post("/api/users/:id/sites",auth,async(req,res)=>{
  const u=await one("SELECT id FROM users WHERE id=$1",[req.params.id]),site=await one("SELECT id FROM sites WHERE id=$1",[req.body.site_id]);
  if(!u||!site)return res.status(404).json({error:"사용자 또는 현장을 찾을 수 없습니다."});
  await pool.query("INSERT INTO memberships(user_id,site_id,role) VALUES($1,$2,$3) ON CONFLICT(user_id,site_id) DO UPDATE SET role=EXCLUDED.role",[u.id,site.id,role]);
+ if(role!=='USER')await pool.query('DELETE FROM contractor_memberships WHERE user_id=$1 AND site_id=$2',[u.id,site.id]);
  res.json({ok:true});
 });
 app.delete("/api/users/:id/sites/:siteId",auth,async(req,res)=>{
  if(!(await adminOnly(req,res)))return;
+ await pool.query("DELETE FROM contractor_memberships WHERE user_id=$1 AND site_id=$2",[req.params.id,req.params.siteId]);
  await pool.query("DELETE FROM memberships WHERE user_id=$1 AND site_id=$2",[req.params.id,req.params.siteId]);
  res.json({ok:true});
 });
@@ -588,12 +912,14 @@ app.get("/api/custom/forms",auth,async(req,res,next)=>{try{
 app.post("/api/custom/forms",auth,async(req,res,next)=>{try{
  if((await user(req)).role!=="ADMIN")return res.status(403).json({error:"최고관리자만 변경할 수 있습니다."});
  const title=String(req.body.title||"").trim().slice(0,100);if(!title)return res.status(400).json({error:"메뉴 이름을 입력하세요."});
- res.json(await one("INSERT INTO custom_forms(title,description,sort_order) VALUES($1,$2,COALESCE((SELECT MAX(sort_order)+10 FROM custom_forms),10)) RETURNING *",[title,String(req.body.description||"").slice(0,500)]));
+ const parent=String(req.body.parent_menu||'custom');if(!['custom','risk','tbm','action'].includes(parent))return res.status(400).json({error:'하위 메뉴 위치 오류'});
+ res.json(await one("INSERT INTO custom_forms(title,description,sort_order,parent_menu) VALUES($1,$2,COALESCE((SELECT MAX(sort_order)+10 FROM custom_forms),10),$3) RETURNING *",[title,String(req.body.description||"").slice(0,500),parent]));
 }catch(e){next(e)}});
 app.patch("/api/custom/forms/:id",auth,async(req,res,next)=>{try{
  if((await user(req)).role!=="ADMIN")return res.status(403).json({error:"관리자만 변경할 수 있습니다."});
  const f=await one("SELECT * FROM custom_forms WHERE id=$1",[req.params.id]);if(!f)return res.status(404).json({error:"메뉴가 없습니다."});
- res.json(await one("UPDATE custom_forms SET title=$1,description=$2,active=$3,sort_order=$4 WHERE id=$5 RETURNING *",[String(req.body.title??f.title).trim().slice(0,100),String(req.body.description??f.description).slice(0,500),req.body.active??f.active,Number(req.body.sort_order??f.sort_order),f.id]));
+ const parent=String(req.body.parent_menu??f.parent_menu??'custom');if(!['custom','risk','tbm','action'].includes(parent))return res.status(400).json({error:'하위 메뉴 위치 오류'});
+ res.json(await one("UPDATE custom_forms SET title=$1,description=$2,active=$3,sort_order=$4,parent_menu=$6 WHERE id=$5 RETURNING *",[String(req.body.title??f.title).trim().slice(0,100),String(req.body.description??f.description).slice(0,500),req.body.active??f.active,Number(req.body.sort_order??f.sort_order),f.id,parent]));
 }catch(e){next(e)}});
 app.post("/api/custom/forms/:id/fields",auth,async(req,res,next)=>{try{
  if((await user(req)).role!=="ADMIN")return res.status(403).json({error:"관리자만 변경할 수 있습니다."});
@@ -612,7 +938,10 @@ app.patch("/api/custom/fields/:id",auth,async(req,res,next)=>{try{
 app.get("/api/custom/records",auth,async(req,res,next)=>{try{
  const fid=Number(req.query.form_id),sid=Number(req.query.site_id);
  if(!(await can(req,sid)))return res.status(403).json({error:"현장 권한이 없습니다."});
- res.json(await q("SELECT r.*,u.name author FROM custom_records r LEFT JOIN users u ON u.id=r.created_by WHERE r.form_id=$1 AND r.site_id=$2 AND r.deleted_at IS NULL ORDER BY r.record_date DESC,r.id DESC LIMIT 500",[fid,sid]));
+ const scope=await companyScope(req,sid);
+ res.json(await q(`SELECT r.*,u.name author,c.name contractor_name FROM custom_records r LEFT JOIN users u ON u.id=r.created_by LEFT JOIN contractors c ON c.id=r.contractor_id
+ WHERE r.form_id=$1 AND r.site_id=$2 AND r.deleted_at IS NULL AND ($3::int IS NULL OR r.contractor_id=$3)
+ ORDER BY r.record_date DESC,r.id DESC LIMIT 500`,[fid,sid,scope.restricted?scope.contractor_id||-1:null]));
 }catch(e){next(e)}});
 app.post("/api/custom/records",auth,async(req,res,next)=>{try{
  const fid=Number(req.body.form_id),sid=Number(req.body.site_id);
@@ -620,27 +949,29 @@ app.post("/api/custom/records",auth,async(req,res,next)=>{try{
  const form=await one("SELECT * FROM custom_forms WHERE id=$1 AND active=true",[fid]);if(!form)return res.status(404).json({error:"메뉴를 찾을 수 없습니다."});const visibility=await one("SELECT visible FROM custom_form_sites WHERE form_id=$1 AND site_id=$2",[fid,sid]);if(visibility?.visible===false)return res.status(403).json({error:"이 현장에서 숨김 처리된 양식입니다."});
  const fields=await q("SELECT * FROM custom_fields WHERE form_id=$1 AND active=true",[fid]);const incoming=req.body.values||{},values={};
  for(const f of fields){if(f.field_type==="photo")continue;const v=String(incoming[f.id]??"").slice(0,5000);if(f.required&&!v.trim())return res.status(400).json({error:`${f.label}: 필수 입력 항목입니다.`});if(f.field_type==="select"&&v&&!f.options.includes(v))return res.status(400).json({error:`${f.label}: 선택값 오류`});values[f.id]=v}
- res.json(await one("INSERT INTO custom_records(form_id,site_id,record_date,form_data,created_by) VALUES($1,$2,$3,$4,$5) RETURNING *",[fid,sid,req.body.record_date||new Date().toISOString().slice(0,10),JSON.stringify(values),req.session.userId]));
+ const scope=await companyScope(req,sid);
+ if(scope.restricted&&!scope.contractor_id)return res.status(403).json({error:'소속 업체를 지정해야 합니다.'});
+ res.json(await one("INSERT INTO custom_records(form_id,site_id,record_date,form_data,created_by,contractor_id) VALUES($1,$2,$3,$4,$5,$6) RETURNING *",[fid,sid,req.body.record_date||new Date().toISOString().slice(0,10),JSON.stringify(values),req.session.userId,scope.contractor_id]));
 }catch(e){next(e)}});
 // 사용자 지정 양식의 사진 필드는 기존 R2 비공개 버킷을 공유합니다.
 app.post("/api/custom/records/:id/photos/:fieldId",auth,(req,res,next)=>photoUpload.array("photos",5)(req,res,e=>e?res.status(400).json({error:e.message}):next()),async(req,res,next)=>{try{
- const rec=await one("SELECT * FROM custom_records WHERE id=$1",[req.params.id]);if(!rec||!(await can(req,rec.site_id)))return res.status(404).json({error:"기록이 없습니다."});
+ const rec=await one("SELECT * FROM custom_records WHERE id=$1",[req.params.id]);if(!await customRecordAllowed(req,rec))return res.status(404).json({error:"기록이 없습니다."});
  const field=await one("SELECT * FROM custom_fields WHERE id=$1 AND form_id=$2 AND active=true AND field_type='photo'",[req.params.fieldId,rec.form_id]);if(!field)return res.status(400).json({error:"사진 항목이 아닙니다."});
  if(!r2Ready())return res.status(503).json({error:"R2 연결이 필요합니다."});
  let count=0;for(const f of req.files||[]){const b=f.buffer;const valid=f.mimetype==="image/jpeg"&&b[0]===255&&b[1]===216&&b[2]===255||f.mimetype==="image/png"&&b.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10]))||f.mimetype==="image/webp"&&b.toString("ascii",0,4)==="RIFF"&&b.toString("ascii",8,12)==="WEBP";if(!valid)continue;
  const key=`sites/${rec.site_id}/custom/${rec.form_id}/${rec.id}/${crypto.randomUUID()}`;
  await r2().send(new PutObjectCommand({Bucket:bucket(),Key:key,Body:b,ContentType:f.mimetype}));
- await pool.query("INSERT INTO custom_record_photos(record_id,field_id,object_key,original_name,mime_type,byte_size) VALUES($1,$2,$3,$4,$5,$6)",[rec.id,field.id,key,path.basename(f.originalname).slice(0,180),f.mimetype,b.length]);count++}
+ await pool.query("INSERT INTO custom_record_photos(record_id,field_id,object_key,original_name,mime_type,byte_size,uploaded_by) VALUES($1,$2,$3,$4,$5,$6,$7)",[rec.id,field.id,key,path.basename(f.originalname).slice(0,180),f.mimetype,b.length,req.session.userId]);count++}
  res.json({ok:true,count});
 }catch(e){next(e)}});
 app.get("/api/custom/records/:id/photos",auth,async(req,res,next)=>{try{
- const rec=await one("SELECT * FROM custom_records WHERE id=$1",[req.params.id]);if(!rec||!(await can(req,rec.site_id)))return res.status(404).json({error:"기록이 없습니다."});
+ const rec=await one("SELECT * FROM custom_records WHERE id=$1",[req.params.id]);if(!await customRecordAllowed(req,rec))return res.status(404).json({error:"기록이 없습니다."});
  res.json(await q("SELECT id,field_id,original_name,mime_type,byte_size,created_at FROM custom_record_photos WHERE record_id=$1 AND deleted_at IS NULL ORDER BY id",[rec.id]));
 }catch(e){next(e)}});
 app.get("/api/custom/photos/:id/:mode",auth,async(req,res,next)=>{try{
  if(!["view","download"].includes(req.params.mode))return res.status(404).end();
- const f=await one("SELECT p.*,r.site_id FROM custom_record_photos p JOIN custom_records r ON r.id=p.record_id WHERE p.id=$1",[req.params.id]);
- if(!f||f.deleted_at||!(await can(req,f.site_id)))return res.status(404).json({error:"사진을 찾을 수 없습니다."});
+ const f=await one("SELECT p.*,r.site_id,r.contractor_id FROM custom_record_photos p JOIN custom_records r ON r.id=p.record_id WHERE p.id=$1",[req.params.id]);
+ if(!f||f.deleted_at||!(await customRecordAllowed(req,f)))return res.status(404).json({error:"사진을 찾을 수 없습니다."});
  if(!r2Ready())return res.status(503).json({error:"R2 연결이 필요합니다."});
  const obj=await r2().send(new GetObjectCommand({Bucket:bucket(),Key:f.object_key}));
  res.set({"Content-Type":f.mime_type,"Cache-Control":"private, no-store","X-Content-Type-Options":"nosniff","Content-Disposition":req.params.mode==="download"?`attachment; filename="photo"; filename*=UTF-8''${encodeURIComponent(f.original_name)}`:"inline"});obj.Body.pipe(res);
@@ -770,13 +1101,13 @@ app.patch('/api/admin/announcements/:id',auth,async(req,res,next)=>{try{
 }catch(e){next(e)}});
 app.get('/api/admin/events',auth,async(req,res,next)=>{try{if(!(await adminOnly(req,res)))return;res.json(await q('SELECT e.*,u.name actor FROM admin_events e LEFT JOIN users u ON u.id=e.actor_id ORDER BY e.id DESC LIMIT 300'))}catch(e){next(e)}});
 app.get('/api/admin/stats',auth,async(req,res,next)=>{try{
- const sid=Number(req.query.site_id);if(!(await can(req,sid)))return res.status(403).json({error:'현장 권한이 없습니다.'});
+ const sid=Number(req.query.site_id);if(!(await can(req,sid,['MANAGER'])))return res.status(403).json({error:'현장 권한이 없습니다.'});
  const result={};for(const [name,table] of Object.entries(EDIT_TABLE)){result[name]=Number((await one(`SELECT COUNT(*)::int n FROM ${table} WHERE site_id=$1 AND deleted_at IS NULL`,[sid])).n)}
  result.pending=Number((await one("SELECT COUNT(*)::int n FROM record_approvals WHERE site_id=$1 AND status='SUBMITTED'",[sid])).n);res.json(result);
 }catch(e){next(e)}});
 app.get('/api/admin/export.csv',auth,async(req,res,next)=>{try{
  const sid=Number(req.query.site_id),type=String(req.query.type||''),table=EDIT_TABLE[type];if(!table)return res.status(400).json({error:'기록 종류 오류'});
- if(!(await can(req,sid)))return res.status(403).json({error:'현장 권한이 없습니다.'});
+ if(!(await can(req,sid,['MANAGER'])))return res.status(403).json({error:'현장 권한이 없습니다.'});
  const rows=await q(`SELECT * FROM ${table} WHERE site_id=$1 AND deleted_at IS NULL ORDER BY id DESC LIMIT 10000`,[sid]);
  const keys=rows.length?Object.keys(rows[0]):['id','site_id'];const csvCell=v=>'"'+String(v==null?'':typeof v==='object'?JSON.stringify(v):v).replace(/^[=+@\-\t\r]/,'\'$&').replace(/"/g,'""')+'"';
  res.set({'Content-Type':'text/csv; charset=utf-8','Content-Disposition':`attachment; filename="${type}-site-${sid}.csv"`});res.send('\uFEFF'+[keys.map(csvCell).join(','),...rows.map(r=>keys.map(k=>csvCell(r[k])).join(','))].join('\r\n'));
@@ -787,7 +1118,7 @@ app.get('/api/admin/export.csv',auth,async(req,res,next)=>{try{
 const defaultSteps=[{name:'현장 검토',role:'MANAGER'},{name:'최종 승인',role:'ADMIN'}];
 const validSteps=steps=>Array.isArray(steps)&&steps.length>=1&&steps.length<=8&&steps.every(x=>x&&typeof x.name==='string'&&x.name.trim().length>0&&x.name.length<=60&&['ADMIN','MANAGER'].includes(x.role)&&(!x.user_id||(Number.isSafeInteger(Number(x.user_id))&&Number(x.user_id)>0)));
 app.get('/api/v5/workflow',auth,async(req,res,next)=>{try{
- const sid=Number(req.query.site_id);if(!(await can(req,sid)))return res.status(403).json({error:'현장 권한 없음'});
+ const sid=Number(req.query.site_id);if(!(await can(req,sid,['MANAGER'])))return res.status(403).json({error:'현장 권한 없음'});
  const r=await one('SELECT * FROM approval_workflows WHERE site_id=$1',[sid]);res.json({steps:r?.steps||defaultSteps,updated_at:r?.updated_at||null});
 }catch(e){next(e)}});
 app.put('/api/v5/workflow',auth,async(req,res,next)=>{try{
@@ -797,17 +1128,17 @@ app.put('/api/v5/workflow',auth,async(req,res,next)=>{try{
  const r=await one('INSERT INTO approval_workflows(site_id,steps,updated_by) VALUES($1,$2,$3) ON CONFLICT(site_id) DO UPDATE SET steps=EXCLUDED.steps,updated_by=EXCLUDED.updated_by,updated_at=now() RETURNING *',[sid,JSON.stringify(steps),req.session.userId]);await logAdmin(req,'workflow','UPDATE',sid,{steps});res.json(r);
 }catch(e){next(e)}});
 app.get('/api/v5/cases',auth,async(req,res,next)=>{try{
- const sid=Number(req.query.site_id);if(!(await can(req,sid)))return res.status(403).json({error:'현장 권한 없음'});
+ const sid=Number(req.query.site_id);if(!(await can(req,sid,['MANAGER'])))return res.status(403).json({error:'현장 권한 없음'});
  const rows=await q('SELECT c.*,u.name submitted_by_name FROM approval_cases c LEFT JOIN users u ON u.id=c.submitted_by WHERE c.site_id=$1 ORDER BY c.id DESC LIMIT 200',[sid]);
  res.json(rows);
 }catch(e){next(e)}});
 app.get('/api/v5/cases/:id/decisions',auth,async(req,res,next)=>{try{
- const c=await one('SELECT * FROM approval_cases WHERE id=$1',[req.params.id]);if(!c||!(await can(req,c.site_id)))return res.status(404).json({error:'결재 건 없음'});
+ const c=await one('SELECT * FROM approval_cases WHERE id=$1',[req.params.id]);if(!c||!(await can(req,c.site_id,['MANAGER'])))return res.status(404).json({error:'결재 건 없음'});
  res.json(await q('SELECT d.*,u.name actor FROM approval_decisions d LEFT JOIN users u ON u.id=d.actor_id WHERE d.case_id=$1 ORDER BY d.id',[c.id]));
 }catch(e){next(e)}});
 app.post('/api/v5/cases',auth,async(req,res,next)=>{try{
  const type=String(req.body.record_type),table=EDIT_TABLE[type],id=Number(req.body.record_id),sid=Number(req.body.site_id);
- if(!table||!Number.isSafeInteger(id)||id<1||!(await can(req,sid)))return res.status(400).json({error:'현장 또는 기록 번호 오류'});
+ if(!table||!Number.isSafeInteger(id)||id<1||!(await can(req,sid,['MANAGER'])))return res.status(400).json({error:'현장 또는 기록 번호 오류'});
  const r=await one(`SELECT id FROM ${table} WHERE id=$1 AND site_id=$2 AND deleted_at IS NULL`,[id,sid]);if(!r)return res.status(404).json({error:'현장 기록을 찾을 수 없습니다.'});
  const workflow=await one('SELECT steps FROM approval_workflows WHERE site_id=$1',[sid]);const steps=workflow?.steps||defaultSteps;
  const c=await one('INSERT INTO approval_cases(site_id,record_type,record_id,steps,submitted_by) VALUES($1,$2,$3,$4,$5) ON CONFLICT(record_type,record_id) DO NOTHING RETURNING *',[sid,type,id,JSON.stringify(steps),req.session.userId]);
@@ -819,7 +1150,7 @@ app.post('/api/v5/cases/:id/decision',auth,async(req,res,next)=>{try{
  if(!['APPROVE','REJECT'].includes(action))return res.status(400).json({error:'승인 또는 반려를 선택하세요.'});
  const client=await pool.connect();try{await client.query('BEGIN');
  const c=(await client.query('SELECT * FROM approval_cases WHERE id=$1 FOR UPDATE',[req.params.id])).rows[0];
- if(!c||c.status!=='PENDING'||!(await can(req,c.site_id))){await client.query('ROLLBACK');return res.status(409).json({error:'진행 중인 결재가 아니거나 권한이 없습니다.'})}
+ if(!c||c.status!=='PENDING'||!(await can(req,c.site_id,['MANAGER']))){await client.query('ROLLBACK');return res.status(409).json({error:'진행 중인 결재가 아니거나 권한이 없습니다.'})}
  const step=c.steps[c.current_step-1];
  if(!step||u.role!=='ADMIN'&&!(u.role===step.role&&(!step.user_id||Number(step.user_id)===u.id))||step.user_id&&Number(step.user_id)!==u.id&&u.role!=='ADMIN'){
  await client.query('ROLLBACK');return res.status(403).json({error:'현재 결재 단계의 승인 권한이 없습니다.'})}
@@ -858,8 +1189,10 @@ app.get('/api/v5/record-audit',auth,async(req,res,next)=>{try{
 // Print-ready Korean report. The browser's print dialog can save as PDF.
 app.get('/api/v5/report',auth,async(req,res,next)=>{try{
  const sid=Number(req.query.site_id),type=String(req.query.type),table=EDIT_TABLE[type];if(!table||!(await can(req,sid)))return res.status(403).send('권한 또는 종류 오류');
+ const scope=await companyScope(req,sid);
  const from=String(req.query.from||''),to=String(req.query.to||'');if([from,to].some(x=>x&&!/^\d{4}-\d{2}-\d{2}$/.test(x))||(from&&to&&from>to))return res.status(400).send('날짜 형식 오류');
  const dateCol={risk:'risk_date',tbm:'tbm_date',action:'due_date',custom:'record_date'}[type],params=[sid];let where='site_id=$1 AND deleted_at IS NULL';
+ if(scope.restricted){params.push(scope.contractor_id||-1);where+=` AND contractor_id=$${params.length}`;}
  if(from){params.push(from);where+=` AND ${dateCol} >= $${params.length}::date`}
  if(to){params.push(to);where+=` AND ${dateCol} <= $${params.length}::date`}
  const rows=await q(`SELECT * FROM ${table} WHERE ${where} ORDER BY id DESC LIMIT 2000`,params);
