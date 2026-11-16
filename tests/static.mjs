@@ -11,7 +11,8 @@ const js=html.match(/<script>([\s\S]*?)<\/script>/)?.[1];assert(js,'Main JS miss
 new vm.Script(js,{filename:'index.html inline script'});
 new vm.Script(reviewJs,{filename:'review-v7.js'});
 new vm.Script(server,{filename:'server.js'});
-assert(html.includes('/review-v7.css?v=20261116b')&&html.includes('/review-v7.js?v=20261116b'),'Versioned UI assets missing');
+const assetCss=html.match(/\/review-v7\.css\?v=([0-9a-z]+)/),assetJs=html.match(/\/review-v7\.js\?v=([0-9a-z]+)/);
+assert(assetCss&&assetJs&&assetCss[1]===assetJs[1],'Versioned UI assets missing or inconsistent');
 assert(reviewCss.includes('.review-workspace{display:grid')&&reviewCss.includes('.app>main.main'),'Review layout CSS missing');
 assert(html.includes('id="v7WeeklyDetailsCard"')&&html.includes('id="reviewStatusFilter"')&&html.includes('id="v8TbmDetail"'),'Review workspace panels missing');
 const markup=html.split('<script>')[0];

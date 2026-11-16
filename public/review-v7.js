@@ -3,6 +3,7 @@
   'use strict';
   const byId = id => document.getElementById(id);
   const clean = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const companyLabel = record => record.contractor_name || (record.entry_mode === 'PRIME' ? '원청 자체 작성' : '업체 정보 확인 필요');
   const day = value => String(value || '').slice(0,10);
   const siteName = () => {
     if (typeof sites === 'undefined' || typeof sid === 'undefined') return '선택 현장';
@@ -106,7 +107,7 @@
       const id = Number(r.id), rows = Array.isArray(items) ? items : [];
       state.selectedWeekly = id;
       byId('v7WeeklyList')?.querySelectorAll('[data-review-id]').forEach(button => button.classList.toggle('is-selected',Number(button.dataset.reviewId) === id));
-      const companyCount = new Set(rows.map(x => String(x.contractor_id || x.contractor_name || '')).filter(Boolean)).size;
+      const companyCount = new Set(rows.map(x => x.contractor_id ? String(x.contractor_id) : x.entry_mode === 'PRIME' ? 'PRIME' : 'LEGACY_UNASSIGNED')).size;
       const track = [
         `<div class="review-approval-step done"><b>① 협력업체 작성</b><small>위험요인 ${rows.length}건</small></div>`,
         `<div class="review-approval-step done"><b>② 원청 취합·상신</b><small>${clean(r.submitted_by_name||'-')}</small></div>`,
@@ -120,7 +121,7 @@
           ? `<button onclick="v8ReloadRejected('${clean(day(r.week_start))}')">반려 평가서 수정·재상신 준비</button>`
           : `<span class="review-pill ${clean(r.status)}">${r.status==='APPROVED'?'결재가 완료된 평가서입니다.':'반려된 평가서입니다.'}</span>`);
       const contents = rows.length
-        ? `<div class="review-data"><table><thead><tr><th>협력업체</th><th>작성자</th><th>작업</th><th>위험요인</th><th>위험도</th><th>감소대책</th><th>사진</th></tr></thead><tbody>${rows.map(x => `<tr><td>${clean(x.contractor_name||'미지정')}</td><td>${clean(x.author_name||'-')}</td><td>${clean(x.work||'-')}</td><td>${clean(x.hazard||'-')}</td><td>${Number(x.frequency)||1}×${Number(x.severity)||1}=${Number(x.score)||0}</td><td>${clean(x.measure||'-')}</td><td>${Number(x.id)>0?`<button class="review-btn-secondary" style="padding:7px" onclick="openPhotos('risk',${Number(x.id)})">📷</button>`:'-'}</td></tr>`).join('')}</tbody></table></div>`
+        ? `<div class="review-data"><table><thead><tr><th>협력업체</th><th>작성자</th><th>작업</th><th>위험요인</th><th>위험도</th><th>감소대책</th><th>사진</th></tr></thead><tbody>${rows.map(x => `<tr><td>${clean(companyLabel(x))}</td><td>${clean(x.author_name||'-')}</td><td>${clean(x.work||'-')}</td><td>${clean(x.hazard||'-')}</td><td>${Number(x.frequency)||1}×${Number(x.severity)||1}=${Number(x.score)||0}</td><td>${clean(x.measure||'-')}</td><td>${Number(x.id)>0?`<button class="review-btn-secondary" style="padding:7px" onclick="openPhotos('risk',${Number(x.id)})">📷</button>`:'-'}</td></tr>`).join('')}</tbody></table></div>`
         : '<p class="review-note">이 평가서에 포함된 위험요인이 없습니다.</p>';
       byId('v7WeeklyDetails').innerHTML = `<div class="review-detail-top"><div><div class="review-detail-kicker">주간 통합 위험성평가 · 문서 #${id} · ${Number(r.revision)||1}차</div><div class="review-detail-title">${clean(weekName(r.week_start))} 위험성평가</div><div class="muted">${clean(siteName())} · ${clean(weekPeriod(r.week_start))}</div></div>${pill(r.status)}</div>
         <div class="review-detail-content"><h4 class="review-section-heading">결재 진행 현황</h4><div class="review-approval-track">${track}</div>
@@ -137,7 +138,7 @@
       this.syncSite();
       state.tbmRows = Array.isArray(rows) ? rows : [];
       const host=byId('v8TbmApprovals'); if(!host)return;
-      host.innerHTML = state.tbmRows.length ? state.tbmRows.map(r=>`<button type="button" class="review-document ${Number(r.id)===state.selectedTbm?'is-selected':''}" data-tbm-review="${Number(r.id)}" onclick="reviewUi.selectTbm(${Number(r.id)})"><div class="review-document-row"><span class="review-meta">${clean(day(r.tbm_date))} · ${clean(r.contractor_name||'업체 미지정')}</span>${pill('SUBMITTED')}</div><strong>${clean(r.work_name||'작업명 미입력')}</strong><p>${clean(r.team||'-')} · 작성자 ${clean(r.author_name||'-')} · ${Number(r.people)||0}명</p></button>`).join('') : '<div class="review-empty"><div class="illustration">✅</div><b>승인 대기 TBM이 없습니다</b><p>현재 선택한 현장의 결재 대기가 없습니다.</p></div>';
+      host.innerHTML = state.tbmRows.length ? state.tbmRows.map(r=>`<button type="button" class="review-document ${Number(r.id)===state.selectedTbm?'is-selected':''}" data-tbm-review="${Number(r.id)}" onclick="reviewUi.selectTbm(${Number(r.id)})"><div class="review-document-row"><span class="review-meta">${clean(day(r.tbm_date))} · ${clean(companyLabel(r))}</span>${pill('SUBMITTED')}</div><strong>${clean(r.work_name||'작업명 미입력')}</strong><p>${clean(r.team||'-')} · 작성자 ${clean(r.author_name||'-')} · ${Number(r.people)||0}명</p></button>`).join('') : '<div class="review-empty"><div class="illustration">✅</div><b>승인 대기 TBM이 없습니다</b><p>현재 선택한 현장의 결재 대기가 없습니다.</p></div>';
       if (state.tbmRows.length) this.selectTbm(state.tbmRows.some(r=>Number(r.id)===state.selectedTbm)?state.selectedTbm:Number(state.tbmRows[0].id));
       else this.clearTbm();
     },
@@ -147,7 +148,7 @@
       byId('v8TbmApprovals')?.querySelectorAll('[data-tbm-review]').forEach(b=>b.classList.toggle('is-selected',Number(b.dataset.tbmReview)===state.selectedTbm));
       const isManager=typeof v8IsManager==='function' && v8IsManager();
       byId('v8TbmDetail').innerHTML=`<div class="review-detail-top"><div><div class="review-detail-kicker">TBM 기록 · #${Number(r.id)}</div><div class="review-detail-title">${clean(r.work_name||'TBM 작업')}</div><div class="muted">${clean(siteName())} · ${clean(day(r.tbm_date))}</div></div>${pill('SUBMITTED')}</div>
-        <div class="review-detail-content"><div class="review-detail-grid">${field('협력업체',r.contractor_name||'미지정')}${field('작성자',r.author_name||'-')}${field('실시일',day(r.tbm_date))}${field('참여 인원',`${Number(r.people)||0}명`)}${field('팀/업체',r.team||'-')}${field('결재 상태','원청 승인 대기')}</div>
+        <div class="review-detail-content"><div class="review-detail-grid">${field('협력업체',companyLabel(r))}${field('작성자',r.author_name||'-')}${field('실시일',day(r.tbm_date))}${field('참여 인원',`${Number(r.people)||0}명`)}${field('팀/업체',r.team||'-')}${field('결재 상태','원청 승인 대기')}</div>
         <h4 class="review-section-heading">주요 위험요인</h4><div class="review-note">${clean(r.hazard||'입력된 위험요인이 없습니다.')}</div>
         <h4 class="review-section-heading">안전대책</h4><div class="review-note">${clean(r.measure||'입력된 안전대책이 없습니다.')}</div>
         <div class="review-actions"><button class="review-btn-secondary" onclick="openPhotos('tbm',${Number(r.id)})">📷 사진 보기</button>${isManager?`<button class="review-btn-approve" onclick="v8DecideTbm(${Number(r.id)},'APPROVED')">✓ TBM 승인</button><button class="review-btn-reject" onclick="v8DecideTbm(${Number(r.id)},'REJECTED')">↩ 반려</button>`:'<span class="review-pill PENDING">원청 승인 대기</span>'}</div></div>`;

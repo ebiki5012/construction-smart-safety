@@ -493,6 +493,10 @@ app.post('/api/v7/weekly',auth,async(req,res,next)=>{try{
  if(old&&old.status!=='REJECTED'){await client.query('ROLLBACK');return res.status(409).json({error:'이미 상신 또는 승인된 주차입니다. 반려된 평가서만 재상신할 수 있습니다.'})}
  const items=(await client.query(weeklyRowsSql,[sid,start])).rows;
  if(!items.length){await client.query('ROLLBACK');return res.status(400).json({error:'해당 주차에 적용되는 위험성평가가 없습니다.'})}
+ if(items.some(r=>!r.contractor_id&&r.entry_mode!=='PRIME')){
+  await client.query('ROLLBACK');
+  return res.status(409).json({error:'업체 정보가 확인되지 않은 위험요인이 포함되어 있습니다. [협력업체·작성자 관리 → 과거 기록의 업체 정보 정리]에서 업체 또는 원청 자체 작성을 지정한 뒤 상신해 주세요.'});
+ }
  const companies=(await client.query(`SELECT DISTINCT r.contractor_id,c.name FROM risks r JOIN contractors c ON c.id=r.contractor_id
  WHERE r.site_id=$1 AND r.deleted_at IS NULL AND COALESCE(r.period_start,r.risk_date)<($2::date+7)
  AND COALESCE(r.period_end,r.period_start,r.risk_date)>=$2::date AND NOT EXISTS
@@ -563,13 +567,14 @@ app.get('/api/v8/weekly/:id/report',auth,async(req,res,next)=>{try{
  const currentRevision=Number(rev.revision)===Number(w.revision);
  const h=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
  const datestr=x=>h(isoDate(x));
- const body=items.map((r,i)=>`<tr><td>${i+1}</td><td>${h(r.contractor_name||'미지정')}</td><td>${h(r.author_name||'-')}</td><td>${h(r.area)}</td><td>${h(r.work)}</td><td>${h(r.hazard)}</td><td>${h(r.frequency)}×${h(r.severity)}=${h(r.score)}</td><td>${h(r.measure)}</td></tr>`).join('');
+ const body=items.map((r,i)=>`<tr><td>${i+1}</td><td>${h(r.contractor_name||(r.entry_mode==='PRIME'?'원청 자체 작성':'업체 정보 확인 필요'))}</td><td>${h(r.author_name||'-')}</td><td>${h(r.area)}</td><td>${h(r.work)}</td><td>${h(r.hazard)}</td><td>${h(r.frequency)}×${h(r.severity)}=${h(r.score)}</td><td>${h(r.measure)}</td></tr>`).join('');
  res.set({'Content-Type':'text/html; charset=utf-8','Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'}).send(`<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>${h(w.site_name)} 주간 위험성평가 ${datestr(w.week_start)}</title><style>body{font-family:'Malgun Gothic',Arial,sans-serif;color:#1e293b;padding:24px}table{width:100%;border-collapse:collapse;font-size:11px}th,td{border:1px solid #94a3b8;padding:6px;vertical-align:top;word-break:break-all}th{background:#e2e8f0}h1{font-size:22px}.meta{line-height:1.9}.note{white-space:pre-wrap;border:1px solid #cbd5e1;padding:10px}@media print{button{display:none}@page{size:A4 landscape;margin:12mm}body{padding:0}}</style></head><body><h1>주간 통합 위험성평가서</h1><div class="meta">현장: ${h(w.site_name)}<br>평가 주차: ${datestr(w.week_start)} ~ ${datestr(new Date(new Date(w.week_start).getTime()+6*86400000))}<br>회의일: ${datestr(rev.meeting_date)||'-'} · 참석자: ${h(rev.attendees)||'-'}<br>상신자: ${h(w.submitted_by_name)||'-'} · 최종 승인자: ${currentRevision?h(w.approved_by_name)||'-':'과거 차수 (현재 승인 정보와 별개)'} · 승인일: ${currentRevision?datestr(w.approved_at)||'-':'-'}<br>상태: ${currentRevision?h(w.status):'과거 차수 보관본'} · 차수: ${h(rev.revision)} · 평가 항목: ${items.length}건</div><h3>회의 및 검토 내용</h3><div class="note">${h(rev.meeting_notes)}</div><h3>주간 위험요인 통합 목록</h3><table><thead><tr><th>No.</th><th>협력업체</th><th>작성자</th><th>구역</th><th>작업</th><th>위험요인</th><th>빈도×강도</th><th>감소대책</th></tr></thead><tbody>${body}</tbody></table><p>승인 당시 평가 항목 스냅샷을 출력한 조회용 보고서입니다. 인쇄 대화상자에서 PDF로 저장할 수 있습니다. 법정 전자서명 또는 별도 법정 서식을 대체하지 않습니다. 기존 V7 이전 평가서의 최초 스냅샷은 업그레이드 당시 보존된 내용일 수 있습니다.</p><button onclick="window.print()">인쇄 / PDF 저장</button></body></html>`);
 }catch(e){next(e)}});
 // TBM: separate site-manager approval queue, independent of weekly risk approval.
 app.post('/api/v8/tbm/:id/submit',auth,async(req,res,next)=>{try{
  const t=await one('SELECT * FROM tbms WHERE id=$1 AND deleted_at IS NULL',[req.params.id]);
  if(!t||!(await recordCompanyAllowed(req,'tbm',t.id,t.site_id)))return res.status(404).json({error:'TBM을 찾을 수 없습니다.'});
+ if(!t.contractor_id&&t.entry_mode!=='PRIME')return res.status(409).json({error:'TBM의 업체 정보가 확인되지 않았습니다. [협력업체·작성자 관리]에서 업체를 지정한 뒤 결재를 요청하세요.'});
  const prev=await one("SELECT status FROM record_approvals WHERE record_type='tbm' AND record_id=$1",[t.id]);
  if(prev&&['SUBMITTED','APPROVED'].includes(prev.status))return res.status(409).json({error:'이미 결재 요청 또는 승인된 TBM입니다.'});
  const row=await one(`INSERT INTO record_approvals(record_type,record_id,site_id,status,comment,updated_at) VALUES('tbm',$1,$2,'SUBMITTED','',now())
@@ -599,8 +604,9 @@ app.post("/api/risks",auth,async(req,res)=>{
  if(scope.restricted&&!scope.contractor_id)return res.status(403).json({error:'현장관리자에게 소속 협력업체 지정을 요청하세요.'});
  if(scope.restricted&&req.body.contractor_id&&Number(req.body.contractor_id)!==scope.contractor_id)return res.status(403).json({error:'다른 업체로 작성할 수 없습니다.'});
  if(req.body.entry_mode==='PROXY'&&scope.restricted)return res.status(403).json({error:'원청 대리 작성은 현장관리자만 가능합니다.'});
+ if(!scope.restricted&&!req.body.contractor_id&&req.body.prime_self!==true)return res.status(400).json({error:'협력업체를 선택하거나 [원청 자체 작성]을 명시해 주세요.'});
  const contractorId=scope.restricted?scope.contractor_id:Number(req.body.contractor_id)||null;
- const entryMode=scope.restricted?'DIRECT':contractorId?'PROXY':'DIRECT';
+ const entryMode=scope.restricted?'DIRECT':contractorId?'PROXY':'PRIME';
  const r=riskCalc(req.body.frequency,req.body.severity,s),u=await user(req);
  const x=await one(`INSERT INTO risks(site_id,risk_date,area,work,hazard,frequency,severity,score,level,measure,author_id,period_start,period_end,contractor_id,entry_mode)
  VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *`,
@@ -788,9 +794,10 @@ app.post("/api/tbms",auth,async(req,res)=>{
  if(scope.restricted&&!scope.contractor_id)return res.status(403).json({error:'현장관리자에게 소속 협력업체 지정을 요청하세요.'});
  if(scope.restricted&&req.body.contractor_id&&Number(req.body.contractor_id)!==scope.contractor_id)return res.status(403).json({error:'다른 업체로 작성할 수 없습니다.'});
  if(req.body.entry_mode==='PROXY'&&scope.restricted)return res.status(403).json({error:'원청 대리 작성은 현장관리자만 가능합니다.'});
+ if(!scope.restricted&&!req.body.contractor_id&&req.body.prime_self!==true)return res.status(400).json({error:'협력업체를 선택하거나 [원청 자체 작성]을 명시해 주세요.'});
  const contractorId=scope.restricted?scope.contractor_id:Number(req.body.contractor_id)||null;
- const entryMode=scope.restricted?'DIRECT':contractorId?'PROXY':'DIRECT';
- if(req.body.risk_id&&!await one('SELECT id FROM risks WHERE id=$1 AND site_id=$2 AND deleted_at IS NULL AND ($3::int IS NULL OR contractor_id=$3)',[req.body.risk_id,sid,scope.restricted?scope.contractor_id:null]))return res.status(400).json({error:'연결할 위험성평가가 해당 현장/업체에 없습니다.'});
+ const entryMode=scope.restricted?'DIRECT':contractorId?'PROXY':'PRIME';
+ if(req.body.risk_id&&!await one("SELECT id FROM risks WHERE id=$1 AND site_id=$2 AND deleted_at IS NULL AND contractor_id IS NOT DISTINCT FROM $3::int AND ($4::bool IS FALSE OR entry_mode='PRIME')",[req.body.risk_id,sid,contractorId,entryMode==='PRIME']))return res.status(400).json({error:'TBM과 동일한 업체의 위험성평가만 연결할 수 있습니다.'});
  const u=await user(req);
  res.json(await one(`INSERT INTO tbms(site_id,tbm_date,team,work_name,people,hazard,measure,risk_id,created_by,contractor_id,entry_mode)
  VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
@@ -1073,18 +1080,69 @@ app.get('/api/admin/approvals',auth,async(req,res,next)=>{try{
  const sid=Number(req.query.site_id);if(!(await can(req,sid)))return res.status(403).json({error:'현장 권한이 없습니다.'});
  res.json(await q('SELECT a.*,u.name reviewer FROM record_approvals a LEFT JOIN users u ON u.id=a.reviewer_id WHERE a.site_id=$1 ORDER BY a.updated_at DESC LIMIT 300',[sid]));
 }catch(e){next(e)}});
-app.put('/api/admin/approvals/:type/:id',auth,async(req,res,next)=>{try{
- const type=req.params.type,table=EDIT_TABLE[type],status=String(req.body.status||'');
- if(!table||!['SUBMITTED','APPROVED','REJECTED'].includes(status))return res.status(400).json({error:'요청 오류'});
- const record=await one(`SELECT id,site_id FROM ${table} WHERE id=$1 AND deleted_at IS NULL`,[req.params.id]);if(!record)return res.status(404).json({error:'기록이 없습니다.'});
- const u=await user(req);if(!(await can(req,record.site_id)))return res.status(403).json({error:'현장 권한이 없습니다.'});
- if(status!=='SUBMITTED'&&u.role!=='ADMIN'&&!(await can(req,record.site_id,['MANAGER'])))return res.status(403).json({error:'승인 권한이 없습니다.'});
- const previous=await one('SELECT * FROM record_approvals WHERE record_type=$1 AND record_id=$2',[type,record.id]);
- if(status==='SUBMITTED'&&previous?.status==='APPROVED')return res.status(409).json({error:'승인된 기록은 재상신할 수 없습니다.'});
- const comment=String(req.body.comment||'').slice(0,1000);
- const result=await one(`INSERT INTO record_approvals(record_type,record_id,site_id,status,reviewer_id,comment) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(record_type,record_id) DO UPDATE SET status=EXCLUDED.status,reviewer_id=EXCLUDED.reviewer_id,comment=EXCLUDED.comment,updated_at=now() RETURNING *`,[type,record.id,record.site_id,status,status==='SUBMITTED'?null:u.id,comment]);
- await logAdmin(req,'approval',status,record.id,{type,site_id:record.site_id,comment});res.json(result);
+// The official review queues belong to the field site, not the admin console.
+// This endpoint only reads existing data; no additional approval record is created.
+app.get('/api/v9/approval-overview',auth,async(req,res,next)=>{try{
+ const sid=Number(req.query.site_id);
+ if(!(await can(req,sid,['MANAGER'])))return res.status(403).json({error:'현장 관리자 권한이 필요합니다.'});
+ const [weekly,tbm,legacy]=await Promise.all([
+  q(`SELECT w.id,w.week_start,w.status,w.revision,w.submitted_at,w.approved_at,w.decision_comment,
+    u.name submitted_by_name,a.name approved_by_name,
+    COALESCE(jsonb_array_length(w.snapshot),0) item_count
+    FROM weekly_risk_reviews w LEFT JOIN users u ON u.id=w.submitted_by
+    LEFT JOIN users a ON a.id=w.approved_by WHERE w.site_id=$1 ORDER BY w.week_start DESC LIMIT 100`,[sid]),
+  q(`SELECT t.id,t.tbm_date,t.work_name,t.team,t.contractor_id,t.entry_mode,c.name contractor_name,
+    u.name author_name,a.status,a.comment,a.updated_at,reviewer.name reviewer_name
+    FROM record_approvals a JOIN tbms t ON t.id=a.record_id AND a.record_type='tbm'
+    LEFT JOIN users u ON u.id=t.created_by LEFT JOIN users reviewer ON reviewer.id=a.reviewer_id
+    LEFT JOIN contractors c ON c.id=t.contractor_id
+    WHERE a.site_id=$1 AND t.deleted_at IS NULL ORDER BY a.updated_at DESC LIMIT 100`,[sid]),
+  q(`SELECT id,record_type,record_id,status,created_at FROM approval_cases WHERE site_id=$1 ORDER BY id DESC LIMIT 100`,[sid])
+ ]);
+ res.json({weekly,tbm,legacy});
 }catch(e){next(e)}});
+
+// Explicit historical company attribution: keep the original record and audit
+// who corrected it. Never silently rewrite a submitted or approved snapshot.
+app.get('/api/v9/unassigned-records',auth,async(req,res,next)=>{try{
+ const sid=Number(req.query.site_id);
+ if(!(await can(req,sid,['MANAGER'])))return res.status(403).json({error:'현장 관리자 권한이 필요합니다.'});
+ const [risks,tbms]=await Promise.all([
+  q(`SELECT r.id,r.risk_date record_date,r.work title,u.name author_name,'risk' kind
+    FROM risks r LEFT JOIN users u ON u.id=r.author_id
+    WHERE r.site_id=$1 AND r.deleted_at IS NULL AND r.contractor_id IS NULL
+    AND COALESCE(r.entry_mode,'')<>'PRIME' ORDER BY r.id DESC LIMIT 100`,[sid]),
+  q(`SELECT t.id,t.tbm_date record_date,t.work_name title,u.name author_name,'tbm' kind
+    FROM tbms t LEFT JOIN users u ON u.id=t.created_by
+    WHERE t.site_id=$1 AND t.deleted_at IS NULL AND t.contractor_id IS NULL
+    AND COALESCE(t.entry_mode,'')<>'PRIME' ORDER BY t.id DESC LIMIT 100`,[sid])
+ ]);
+ res.json([...risks,...tbms]);
+}catch(e){next(e)}});
+app.patch('/api/v9/records/:kind/:id/contractor',auth,async(req,res,next)=>{try{
+ const kind=req.params.kind,table={risk:'risks',tbm:'tbms'}[kind],id=Number(req.params.id),sid=Number(req.body.site_id);
+ if(!table||!Number.isSafeInteger(id)||id<1||!(await can(req,sid,['MANAGER'])))return res.status(403).json({error:'현장 관리자 권한과 기록을 확인하세요.'});
+ const self=req.body.contractor_id==='PRIME',cid=self?null:Number(req.body.contractor_id);
+ if(!self&&(!Number.isSafeInteger(cid)||cid<1||!await one('SELECT id FROM contractors WHERE id=$1 AND site_id=$2 AND active=true',[cid,sid])))return res.status(400).json({error:'해당 현장의 협력업체를 선택하세요.'});
+ const client=await pool.connect();try{
+  await client.query('BEGIN');
+  const before=(await client.query(`SELECT * FROM ${table} WHERE id=$1 AND site_id=$2 AND deleted_at IS NULL FOR UPDATE`,[id,sid])).rows[0];
+  if(!before){await client.query('ROLLBACK');return res.status(404).json({error:'기록이 없거나 다른 현장의 기록입니다.'})}
+  if(before.contractor_id||before.entry_mode==='PRIME'){await client.query('ROLLBACK');return res.status(409).json({error:'이미 업체가 지정된 기록입니다. 수정이 필요하면 기록 관리자에게 문의하세요.'})}
+  const locked=kind==='risk'
+   ?(await client.query(`SELECT id FROM weekly_risk_reviews WHERE site_id=$1 AND status IN ('PENDING','APPROVED')
+      AND COALESCE(snapshot,'[]'::jsonb) @> jsonb_build_array(jsonb_build_object('id',$2::int)) LIMIT 1`,[sid,id])).rows.length>0
+   :(await client.query(`SELECT id FROM record_approvals WHERE record_type='tbm' AND record_id=$1 AND status IN ('SUBMITTED','APPROVED')`,[id])).rows.length>0;
+  if(locked){await client.query('ROLLBACK');return res.status(409).json({error:'상신 또는 승인된 기록은 업체를 변경할 수 없습니다. 결재 보존을 위해 기존 자료를 확인하세요.'})}
+  const after=(await client.query(`UPDATE ${table} SET contractor_id=$1,entry_mode=$2 WHERE id=$3 RETURNING *`,[cid,self?'PRIME':'PROXY',id])).rows[0];
+  await client.query(`INSERT INTO record_audit(record_type,record_id,site_id,actor_id,action,before_data,after_data)
+   VALUES($1,$2,$3,$4,'CONTRACTOR_ASSIGN',$5,$6)`,[kind,id,sid,req.session.userId,JSON.stringify(before),JSON.stringify(after)]);
+  await client.query('COMMIT');res.json(after);
+ }catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}
+}catch(e){next(e)}});
+app.put('/api/admin/approvals/:type/:id',auth,(req,res)=>res.status(409).json({
+ error:'기록별 관리자 결재는 종료되었습니다. 위험성평가는 [주간 통합 결재], TBM은 [TBM 결재함]에서 처리하세요. 기존 이력은 유지됩니다.'
+}));
 app.get('/api/admin/announcements',auth,async(req,res,next)=>{try{
  const sid=Number(req.query.site_id),u=await user(req);if(!(await can(req,sid)))return res.status(403).json({error:'현장 권한이 없습니다.'});
  res.json(await q('SELECT * FROM admin_announcements WHERE (site_id=$1 OR site_id IS NULL) AND (active=true OR $2) ORDER BY id DESC LIMIT 100',[sid,u.role==='ADMIN']));
@@ -1136,16 +1194,12 @@ app.get('/api/v5/cases/:id/decisions',auth,async(req,res,next)=>{try{
  const c=await one('SELECT * FROM approval_cases WHERE id=$1',[req.params.id]);if(!c||!(await can(req,c.site_id,['MANAGER'])))return res.status(404).json({error:'결재 건 없음'});
  res.json(await q('SELECT d.*,u.name actor FROM approval_decisions d LEFT JOIN users u ON u.id=d.actor_id WHERE d.case_id=$1 ORDER BY d.id',[c.id]));
 }catch(e){next(e)}});
-app.post('/api/v5/cases',auth,async(req,res,next)=>{try{
- const type=String(req.body.record_type),table=EDIT_TABLE[type],id=Number(req.body.record_id),sid=Number(req.body.site_id);
- if(!table||!Number.isSafeInteger(id)||id<1||!(await can(req,sid,['MANAGER'])))return res.status(400).json({error:'현장 또는 기록 번호 오류'});
- const r=await one(`SELECT id FROM ${table} WHERE id=$1 AND site_id=$2 AND deleted_at IS NULL`,[id,sid]);if(!r)return res.status(404).json({error:'현장 기록을 찾을 수 없습니다.'});
- const workflow=await one('SELECT steps FROM approval_workflows WHERE site_id=$1',[sid]);const steps=workflow?.steps||defaultSteps;
- const c=await one('INSERT INTO approval_cases(site_id,record_type,record_id,steps,submitted_by) VALUES($1,$2,$3,$4,$5) ON CONFLICT(record_type,record_id) DO NOTHING RETURNING *',[sid,type,id,JSON.stringify(steps),req.session.userId]);
- if(!c)return res.status(409).json({error:'이미 결재가 등록된 기록입니다.'});
- await logAdmin(req,'approval','SUBMIT',c.id,{type,record_id:id,site_id:sid});res.json(c);
-}catch(e){next(e)}});
+app.post('/api/v5/cases',auth,(req,res)=>res.status(409).json({
+ error:'이전 다단계 개별결재의 신규 상신은 종료되었습니다. 위험성평가는 주간 단위로, TBM은 현장 결재함에서 처리하세요.'
+}));
 app.post('/api/v5/cases/:id/decision',auth,async(req,res,next)=>{try{
+ const previous=await one('SELECT record_type FROM approval_cases WHERE id=$1',[req.params.id]);
+ if(previous&&['risk','tbm'].includes(previous.record_type))return res.status(409).json({error:'구버전 위험성평가·TBM 개별결재는 이력 조회만 가능합니다. 현재 문서는 현장 통합 결재함을 확인하세요.'});
  const u=await user(req),action=String(req.body.action),comment=String(req.body.comment||'').slice(0,1000);
  if(!['APPROVE','REJECT'].includes(action))return res.status(400).json({error:'승인 또는 반려를 선택하세요.'});
  const client=await pool.connect();try{await client.query('BEGIN');
