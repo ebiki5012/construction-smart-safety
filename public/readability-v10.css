@@ -1,0 +1,111 @@
+/* V10 가독성: 현장 실무에서 가장 중요한 정보에 시선이 먼저 가도록 한다. */
+:root{--v10-ink:#1a304c;--v10-sub:#617690;--v10-border:#dce6f0;--v10-blue:#2159c9;--v10-soft:#f4f8fc}
+body{font-size:15px!important;line-height:1.6!important}
+.app>.side .nav button{font-size:14px!important;line-height:1.5!important;min-height:43px;padding:11px 13px!important}
+.app>.side .v7-subnav button{font-size:13px!important;min-height:38px!important}
+.side .brand{font-size:20px!important;line-height:1.4!important}
+.top .title{font-size:28px!important}
+.top .muted{font-size:13px!important}
+.card>h3,.card>h2{letter-spacing:-.025em}
+.form label{font-size:13px!important}
+.table td{font-size:13px;line-height:1.6}
+.table th{font-size:12px}
+.review-document strong{font-size:15px!important}
+.review-document p{font-size:13px!important}
+.v8-choice-top strong{font-size:15px!important}
+.v8-choice-sub,.v8-choice-hazard{font-size:12px!important}
+.v8-detail-title{font-size:24px!important}
+.v8-detail-section p{font-size:15px!important}
+.v8-detail-info b{font-size:13px!important}
+#weekly .review-intro h2{font-size:30px!important}
+#weekly .review-intro p{font-size:14px!important}
+#weekly .v9-workflow-step b{font-size:13px!important}
+#weekly .v9-workflow-step small{font-size:12px!important}
+#weekly .v10-weekboard-header h3{font-size:20px!important}
+#weekly .v10-week-stat strong{font-size:21px!important}
+#weekly .v9-preview-item strong{font-size:14px!important}
+#weekly .v9-preview-field{font-size:13px!important}
+#weekly .review-workspace{grid-template-columns:minmax(275px,.7fr) minmax(0,1.55fr)!important}
+#weekly #v7WeeklyDetailsCard{min-width:0!important}
+/* 상세 문서. 상단 핵심 3개 지표와 위험요인을 우선 노출. */
+.v10-doc{color:var(--v10-ink);font-size:14px;min-width:0}
+.v10-doc-header{padding:26px 28px 21px;border-bottom:1px solid #e4ecf4;background:linear-gradient(140deg,#fff,#f8fbff)}
+.v10-doc-type{font-size:12px;font-weight:780;color:#6c87a9;letter-spacing:.035em}
+.v10-doc-header h2{font-size:26px;color:#172f4e;line-height:1.36;letter-spacing:-.055em;margin:9px 0 8px;font-weight:900}
+.v10-doc-header p{margin:0;font-size:13px;font-weight:620;color:#72859f;line-height:1.6;white-space:normal}
+.v10-doc-header p span{margin:0 5px;color:#b1c1d3}
+.v10-glance{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;padding:20px 23px 21px}
+.v10-glance-item{min-width:0;border:1px solid #e0e9f3;border-radius:13px;background:#f8fafd;padding:16px 18px;display:flex;flex-direction:column;justify-content:flex-start;min-height:112px}
+.v10-glance-item>span{display:block;font-size:12px;color:#71849c;font-weight:800}
+.v10-glance-item>strong{display:block;font-size:25px;line-height:1.55;color:#213d5b;font-weight:900;letter-spacing:-.04em;overflow-wrap:anywhere}
+.v10-glance-item>small{display:block;font-size:12px;color:#8799af;line-height:1.5;margin-top:3px}
+.v10-glance-item.pending{background:#fff9ef;border-color:#f4e4c7}.v10-glance-item.pending>strong{color:#9b6b20;font-size:18px;padding-top:7px}
+.v10-glance-item.approved{background:#eaf8f1;border-color:#cce9d9}.v10-glance-item.approved>strong{color:#137354;font-size:18px;padding-top:7px}
+.v10-glance-item.rejected{background:#fff0f1;border-color:#f2d9de}.v10-glance-item.rejected>strong{color:#ae4556;font-size:18px;padding-top:7px}
+.v10-glance-item.cancelled>strong{font-size:18px;padding-top:7px}
+.v10-glance-item.attention>small{color:#b14e57;font-weight:750}
+.v10-doc-notice{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:0 23px 16px;border-radius:11px;padding:13px 17px;border:1px solid #d8e7f1;font-size:13px;line-height:1.6}
+.v10-doc-notice strong{font-size:14px;white-space:nowrap}
+.v10-doc-notice span{flex:1;min-width:180px}
+.v10-doc-notice.ok{background:#eaf8f1;border-color:#cde9da;color:#166a50}
+.v10-doc-notice.rejected{background:#fff1f2;border-color:#f3d2d8;color:#a13d4d}
+.v10-doc-notice.neutral{background:#f3f5f9;color:#4a5e78}
+.v10-doc-notice button{background:#fff!important;color:#8c3d46!important;border:1px solid #ebb9bf;min-height:37px}
+.v10-document-risks{padding:4px 23px 24px}
+.v10-section-title{display:flex;justify-content:space-between;align-items:flex-end;gap:13px;border-bottom:1px solid #e6edf4;padding:6px 3px 15px;margin-bottom:17px}
+.v10-section-kicker{display:block;font-size:11px;color:#7392b3;font-weight:830;letter-spacing:.11em;margin-bottom:4px}
+.v10-section-title h3{font-size:20px;margin:0;color:#1c3654;font-weight:900;letter-spacing:-.04em}
+.v10-section-title h3 span{color:#346bb3}
+.v10-section-title>small{font-size:12px;color:#8093aa;text-align:right}
+.v10-risk-card{background:#fff;border:1px solid #dfe8f2;border-radius:14px;margin:0 0 14px;overflow:hidden;box-shadow:0 6px 18px #1b3d6508}
+.v10-risk-card.high{border-left:4px solid #d95a64}
+.v10-risk-card.mid{border-left:4px solid #dfa64a}
+.v10-risk-card.low{border-left:4px solid #58ae90}
+.v10-risk-card-top{padding:16px 17px 14px;display:flex;align-items:flex-start;justify-content:space-between;gap:12px;border-bottom:1px solid #edf1f7}
+.v10-risk-identity{display:flex;align-items:flex-start;gap:11px;min-width:0}
+.v10-risk-number{display:grid;place-items:center;background:#eef4fc;color:#416991;border-radius:9px;min-width:32px;height:32px;font-size:12px;font-weight:830}
+.v10-risk-card-top h4{font-size:17px;font-weight:860;color:#203b5c;line-height:1.45;margin:1px 0 3px;overflow-wrap:anywhere}
+.v10-risk-card-top p{margin:0;font-size:12px;color:#8394a8}
+.v10-risk-level{display:inline-flex;padding:6px 10px;font-size:12px;font-weight:850;border-radius:99px;white-space:nowrap}
+.v10-risk-level.high{background:#ffe8e9;color:#b13e50}
+.v10-risk-level.mid{background:#fff1dc;color:#91611c}
+.v10-risk-level.low{background:#e5f7ef;color:#267959}
+.v10-risk-hazard{padding:17px 19px 15px;display:grid;grid-template-columns:75px minmax(0,1fr);gap:12px;align-items:start}
+.v10-risk-label{font-size:12px;font-weight:850;color:#7388a0;padding-top:2px}
+.v10-risk-hazard>strong{font-size:16px;font-weight:830;color:#233f5e;line-height:1.65;white-space:pre-wrap;overflow-wrap:anywhere}
+.v10-risk-solution{display:grid;grid-template-columns:75px minmax(0,1fr);gap:12px;align-items:start;padding:16px 19px;background:#f0faf6;border-top:1px solid #e0f0e8}
+.v10-risk-solution .v10-risk-label{color:#37836e}
+.v10-risk-solution>p{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;font-size:15px;font-weight:720;color:#246c55;line-height:1.75}
+.v10-risk-foot{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;padding:10px 17px;color:#8192a7;font-size:12px}
+.v10-photo-button{background:#eff4fb!important;color:#416484!important;padding:5px 9px!important;min-height:30px!important;font-size:12px!important}
+.v10-empty{padding:40px;text-align:center;font-size:14px;color:#7488a0}
+/* 상세 메타데이터는 필요할 때만 펼친다. */
+.v10-disclosure{border:1px solid #e1e8f1;border-radius:13px;margin:0 23px 12px;background:#fff;overflow:hidden}
+.v10-disclosure>summary{list-style:none;display:flex;align-items:center;justify-content:space-between;gap:12px;cursor:pointer;padding:17px 20px;background:#f7fafd}
+.v10-disclosure>summary::-webkit-details-marker{display:none}
+.v10-disclosure>summary b,.v10-disclosure>summary small{display:block;line-height:1.5}
+.v10-disclosure>summary b{font-size:14px;font-weight:840;color:#3a5675}
+.v10-disclosure>summary small{font-size:12px;color:#8597ad;margin-top:2px}
+.v10-disclosure-chevron{font-size:11px;font-weight:830;color:#4b7196;white-space:nowrap}
+.v10-disclosure[open] .v10-disclosure-chevron{color:#178078}
+.v10-info-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0;margin:0;padding:10px 20px 20px}
+.v10-info-field{border-bottom:1px solid #edf1f6;padding:11px 9px;min-width:0}
+.v10-info-field dt{font-size:12px;color:#8494a8;font-weight:770;margin-bottom:5px}
+.v10-info-field dd{font-size:14px;line-height:1.6;color:#29435f;font-weight:660;margin:0;white-space:pre-wrap;overflow-wrap:anywhere}
+.v10-process-steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;padding:17px 20px 21px}
+.v10-process-steps>div{border-radius:10px;padding:11px 13px;background:#f3f6fb;font-size:12px;font-weight:820;color:#526b88}
+.v10-process-steps .done{background:#eaf8f1;color:#196b50}.v10-process-steps .active{background:#fff2dc;color:#9b6823}.v10-process-steps .rejected{background:#fff0f1;color:#a84654}
+.v10-process-steps small{display:block;font-size:11px;line-height:1.5;opacity:.8;font-weight:600;margin-top:4px}
+.v10-audit>.review-history{border:0;padding:16px 18px;background:white}
+.v10-doc-footer{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;padding:18px 23px 22px;color:#90a0b3;font-size:11px}
+.v10-pdf-button{background:#eaf2fc!important;color:#315d8c!important;min-height:38px!important}
+/* 결재 수행은 가장 먼저 확인할 수 있도록 상세 상단에 둔다. */
+#weekly .v9-approval-ribbon{padding:17px 23px!important;min-height:84px}
+#weekly .v9-approval-ribbon .v9-ribbon-title{font-size:15px!important;line-height:1.55}
+#weekly .v9-approval-ribbon .v9-ribbon-sub{font-size:12px!important;line-height:1.6}
+#weekly .v9-ribbon-actions button{font-size:13px!important;padding:11px 17px!important;min-height:44px}
+#weekly .v9-approval-heading h3{font-size:21px!important}
+#weekly .review-document .review-meta{font-size:12px!important}
+@media(max-width:1200px){#weekly .review-workspace{grid-template-columns:minmax(0,1fr)!important}}
+@media(max-width:800px){.v10-glance-item{padding:13px}.v10-glance-item>strong{font-size:21px}.v10-doc-header{padding:21px}.v10-document-risks{padding:3px 16px 20px}.v10-disclosure{margin:0 16px 10px}.v10-doc-footer{padding:17px}.v10-glance{padding:16px;gap:7px}.v10-doc-notice{margin:0 16px 12px}}
+@media(max-width:560px){.top .title{font-size:23px!important}.v10-doc-header h2{font-size:21px}.v10-glance{grid-template-columns:repeat(3,minmax(0,1fr));gap:5px}.v10-glance-item{padding:11px 8px;min-height:105px}.v10-glance-item>span{font-size:11px}.v10-glance-item>strong{font-size:18px}.v10-glance-item.pending>strong,.v10-glance-item.approved>strong,.v10-glance-item.rejected>strong{font-size:14px}.v10-glance-item>small{font-size:10px}.v10-risk-card-top{padding:13px}.v10-risk-card-top h4{font-size:15px}.v10-risk-hazard,.v10-risk-solution{grid-template-columns:1fr;gap:5px;padding:12px 14px}.v10-risk-hazard>strong{font-size:15px}.v10-risk-solution>p{font-size:14px}.v10-section-title{align-items:flex-start;flex-direction:column}.v10-section-title h3{font-size:18px}.v10-info-grid{grid-template-columns:1fr}.v10-process-steps{grid-template-columns:1fr}}

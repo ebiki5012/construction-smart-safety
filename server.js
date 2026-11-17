@@ -1408,5 +1408,7 @@ app.get('/api/v5/report',auth,async(req,res,next)=>{try{
  res.set('Content-Type','text/html; charset=utf-8').send(`<!doctype html><html lang="ko"><meta charset="utf-8"><title>${escape(labels[type])} 보고서</title><style>body{font-family:Arial,'Malgun Gothic',sans-serif;padding:24px;color:#14243b}table{border-collapse:collapse;width:100%;font-size:11px}td,th{border:1px solid #b9c5d5;padding:6px;word-break:break-all}th{background:#edf2fa}@media print{button{display:none}body{padding:0}@page{size:A4 landscape;margin:12mm}}</style><h1>${escape(labels[type])} 현장 보고서</h1><p>현장: ${escape(site.name)} | 기간: ${escape(from||'전체')} ~ ${escape(to||'전체')} | 총 ${rows.length}건</p><button onclick="window.print()">인쇄 / PDF로 저장</button><table><thead><tr>${columns.map(c=>`<th>${escape(c)}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr>${columns.map(c=>`<td>${td(r[c])}</td>`).join('')}</tr>`).join('')}</tbody></table><p>※ 전자서명·법정 서식 검증을 대신하지 않는 조회용 보고서입니다.</p></html>`);
 }catch(e){next(e)}});
 
+// 배포 파일 확인용 읽기 전용 엔드포인트. 로그인·DB·R2 설정을 공개하지 않는다.
+app.get('/api/version',(req,res)=>res.set('Cache-Control','no-store').json({version:'10.0.0',release:'2026-11-17',ui:'readable-approval-v10'}));
 app.use((req,res)=>{if(req.method==="GET")res.sendFile(path.join(__dirname,"public","index.html"));else res.status(404).json({error:"요청을 찾을 수 없습니다."})});
 init().then(()=>app.listen(PORT,"0.0.0.0",()=>console.log(`Safety app running on ${PORT}`))).catch(e=>{console.error(e);process.exit(1)});

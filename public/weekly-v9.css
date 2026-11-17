@@ -1,0 +1,126 @@
+/* V9 주간 위험성평가 개편: 작성/취합과 최종결재의 화면 영역을 명확히 분리. */
+#weekly{--v9-ink:#172c48;--v9-muted:#71839a;--v9-line:#e0e8f2;--v9-blue:#2357c5;--v9-deep:#193e69;--v9-teal:#11887b;--v9-panel:#f7f9fd}
+#weekly .review-intro{padding:31px 35px!important;margin-bottom:15px!important;align-items:center;box-shadow:0 18px 40px #1c365017}
+#weekly .review-intro .review-eyebrow{color:#b7d6ff!important;letter-spacing:.13em;font-size:10px!important}
+#weekly .review-intro h2{font-size:29px;color:#fff;letter-spacing:-.055em;margin:7px 0 9px}
+#weekly .review-intro p{color:#d8e6fa!important;font-size:13px;max-width:700px}
+#weekly .review-intro b{color:white}
+#weekly .review-site{border-color:#ffffff55;background:#ffffff1b;color:#edf6ff;font-weight:700;flex:0 0 auto}
+#weekly .v9-workflow{display:grid;grid-template-columns:1fr 18px 1fr 18px 1fr 18px 1fr;gap:8px;align-items:center;padding:14px 20px;border:1px solid #e0e8f2;border-radius:16px;background:#fff;box-shadow:0 5px 18px #19345308;margin-bottom:17px}
+#weekly .v9-workflow-step{display:flex;align-items:center;gap:10px;min-width:0}
+#weekly .v9-step-number{display:grid;place-items:center;width:35px;height:35px;min-width:35px;border-radius:11px;background:#eaf1ff;color:#2c60b6;font-weight:860;font-size:12px}
+#weekly .v9-workflow-step:last-child .v9-step-number{background:#def4ed;color:#177b60}
+#weekly .v9-workflow-step b,#weekly .v9-workflow-step small{display:block;white-space:normal;line-height:1.45}
+#weekly .v9-workflow-step b{font-size:12px;color:#314763;font-weight:820}
+#weekly .v9-workflow-step small{font-size:11px;color:#8495a9;margin-top:3px}
+#weekly .v9-workflow-arrow{color:#a8b8cb;text-align:center;font-size:18px}
+#weekly .review-metrics{margin-bottom:15px!important}
+#weekly .review-metric{border-left:0!important;border-radius:13px!important;padding:17px 20px!important;min-height:75px}
+#weekly .review-metric:first-child{box-shadow:inset 0 4px 0 #e8a34b,var(--v8-shadow)!important}
+#weekly .review-metric:nth-child(2){box-shadow:inset 0 4px 0 #49a984,var(--v8-shadow)!important}
+#weekly .review-metric:nth-child(3){box-shadow:inset 0 4px 0 #da7480,var(--v8-shadow)!important}
+#weekly .review-metric:nth-child(4){box-shadow:inset 0 4px 0 #91a5ba,var(--v8-shadow)!important}
+#weekly .review-metric strong{font-size:28px}
+#weekly .v10-weekboard{margin-bottom:15px!important;padding:24px 26px!important;background:#fff!important}
+#weekly .v10-weekboard-header{padding-bottom:18px}
+#weekly .v10-weekboard-header h3{font-size:18px;margin:5px 0}
+#weekly .v10-weekboard-header p{color:#7486a0;font-size:12px}
+#weekly .v10-weekboard-toolbar button,#weekly #v10ComposeOpen{background:#edf3fb!important;color:#30527a!important;min-height:42px}
+#weekly #v10ComposeOpen{background:var(--v9-blue)!important;color:#fff!important;padding:10px 17px}
+#weekly .v10-week-stat{background:#f7faff;border:1px solid #e4ecf6;border-radius:11px;padding:14px 16px}
+#weekly .v10-company-status{margin-top:16px}
+/* 작성 폼: 큰 화면의 두 영역을 좌우 배치한다. */
+#weekly .review-compose{margin:17px 0 24px;border:1px solid #d4e1ef!important;border-radius:17px!important;overflow:visible;background:white;box-shadow:0 8px 24px #1734500c}
+#weekly .review-compose>summary{list-style:none;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:12px;background:#fff!important;border-radius:17px;padding:17px 23px!important;border:0!important;outline-offset:2px}
+#weekly .review-compose>summary::-webkit-details-marker{display:none}
+#weekly .review-compose[open]>summary{border-bottom:1px solid #dce7f1!important;border-radius:17px 17px 0 0}
+#weekly .v9-compose-summary-main{display:flex;align-items:center;gap:13px;min-width:0}
+#weekly .v9-summary-icon{display:grid;place-items:center;height:38px;width:38px;min-width:38px;background:#e8f1ff;color:#275abb;border-radius:10px;font-size:23px;line-height:1;font-weight:400}
+#weekly .v9-compose-summary-main b{display:block;font-size:15px;font-weight:860;color:#223e5f;letter-spacing:-.03em}
+#weekly .v9-compose-summary-main small{display:block;font-size:11px;color:#7b8fa8;margin-top:4px;font-weight:500}
+#weekly .v9-compose-summary-action{font-size:12px;font-weight:760;background:#edf4fd;border:1px solid #dce8f5;padding:8px 12px;border-radius:10px;color:#315d96;white-space:nowrap}
+#weekly .review-compose[open] .v9-compose-summary-action{color:#176358;background:#e7f7f2;border-color:#c6e5dc}
+#weekly #v7WeeklyEditorCard{margin:0;padding:24px!important;border:0!important;border-radius:0 0 17px 17px!important;box-shadow:none!important;max-width:100%;overflow:hidden}
+#weekly .v9-editor-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:18px;padding:0 2px 20px;border-bottom:1px solid #e9eef5}
+#weekly .v9-kicker{display:block;color:#3d74bb;font-size:10px;letter-spacing:.11em;font-weight:880}
+#weekly .v9-editor-head h3{font-size:22px;letter-spacing:-.04em;margin:4px 0 6px;color:#183250}
+#weekly .v9-editor-head p{font-size:12px;color:#7789a0;margin:0}
+#weekly .v9-editor-badge{display:inline-flex;align-items:center;white-space:nowrap;background:#e8f2fb;color:#3e658e;padding:7px 11px;border-radius:99px;font-size:11px;font-weight:770}
+#weekly .v9-compose-grid{display:grid;grid-template-columns:minmax(360px,.85fr) minmax(0,1.2fr);gap:20px;min-width:0;align-items:start}
+#weekly .v9-compose-form-pane,#weekly .v9-compose-preview-pane{min-width:0;min-height:530px;border:1px solid #e0e8f2;border-radius:14px;background:#fff;padding:21px 21px 24px}
+#weekly .v9-compose-form-pane{background:#f8fafd}
+#weekly .v9-compose-preview-pane{background:#fff}
+#weekly .v9-pane-title{display:flex;gap:11px;align-items:flex-start;margin-bottom:15px}
+#weekly .v9-pane-title .v9-number{display:grid;place-items:center;width:29px;height:29px;min-width:29px;background:#dfeaf9;border-radius:9px;color:#2a5d9e;font-size:11px;font-weight:880}
+#weekly .v9-pane-title h4{font-size:14px;font-weight:840;margin:2px 0 3px;color:#294564}
+#weekly .v9-pane-title p{font-size:11px;color:#7e8fa5;margin:0;line-height:1.5}
+#weekly .v9-compact-form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:12px!important;margin:0 0 19px}
+#weekly .v9-compact-form>div{min-width:0}
+#weekly .v9-compact-form label{display:block;margin:0 0 5px;font-weight:770;font-size:11px;color:#617690}
+#weekly .v9-compact-form input,#weekly .v9-compact-form select{font-size:13px;height:42px}
+#weekly .v9-compact-form textarea{min-height:116px;resize:vertical;line-height:1.65}
+#weekly .v9-action-group{border-top:1px solid #e2eaf4;margin:0;padding:18px 0 0}
+#weekly .v9-action-group .v9-pane-title{margin-bottom:10px}
+#weekly .v9-ready-status{font-size:12px;line-height:1.8;border:1px solid #d6e6f6;background:#edf5fe;color:#2e5c85;padding:13px 15px;border-radius:10px;margin-bottom:12px;min-height:52px}
+#weekly .v9-btn{border:0!important;display:inline-flex;justify-content:center;align-items:center;font-size:12px;font-weight:790;min-height:40px;padding:10px 14px;margin:3px 5px 3px 0;border-radius:10px!important;box-shadow:none!important}
+#weekly .v9-btn-muted{background:#e7edf6!important;color:#37516e!important}
+#weekly .v9-btn-teal{background:#e1f4ef!important;color:#146b60!important}
+#weekly .v9-btn-primary{background:var(--v9-blue)!important;color:white!important;min-height:46px;box-shadow:0 8px 20px #1b53c626!important;width:100%;margin:7px 0}
+#weekly .v9-submit-group{margin-top:15px}
+#weekly .v9-small-note{font-size:11px;color:#768ca6;line-height:1.65}
+#weekly .v9-preview-toolbar{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin:-3px 0 12px}
+#weekly .v9-preview-toolbar .muted{font-size:12px;color:#627895!important;margin:0}
+#weekly .v9-readonly{font-size:10px;background:#f3f6fb;border-radius:30px;padding:5px 9px;color:#7a8aa2}
+#weekly .v9-preview-list{max-height:720px;overflow-y:auto;scrollbar-width:thin;padding-right:4px;display:block}
+#weekly .v9-preview-company{margin-bottom:12px;border:1px solid #e1e9f2;border-radius:12px;overflow:hidden;background:#fff}
+#weekly .v9-preview-company-title{display:flex;justify-content:space-between;align-items:center;gap:8px;background:#f2f6fc;border-bottom:1px solid #e0eaf5;padding:11px 14px;font-size:12px;color:#325473}
+#weekly .v9-preview-company-title strong{font-size:12px;font-weight:840}
+#weekly .v9-preview-company-title small{font-size:11px;color:#6b809c}
+#weekly .v9-preview-item{padding:14px 16px;border-bottom:1px solid #eaf0f6;display:grid;grid-template-columns:1fr auto;gap:5px 10px}
+#weekly .v9-preview-item:last-child{border-bottom:0}
+#weekly .v9-preview-item strong{color:#243c58;font-size:13px;font-weight:820}
+#weekly .v9-preview-author{color:#8a9bb0;font-size:11px;margin-top:3px}
+#weekly .v9-risk-chip{align-self:start;background:#e9f0fa;color:#315981;border-radius:99px;padding:4px 8px;font-size:11px;font-weight:850;white-space:nowrap}
+#weekly .v9-risk-chip.high{background:#ffeded;color:#b94754}
+#weekly .v9-risk-chip.mid{background:#fff2df;color:#94651b}
+#weekly .v9-preview-field{grid-column:1/-1;display:flex;gap:11px;align-items:flex-start;line-height:1.65;font-size:12px;color:#4e627c;overflow-wrap:anywhere}
+#weekly .v9-preview-field span{flex:0 0 50px;display:block;color:#8797aa;font-weight:800;font-size:11px}
+#weekly .v9-preview-field p{margin:0;white-space:pre-wrap;flex:1;min-width:0}
+#weekly .v9-preview-field.solution p{color:#23665c}
+#weekly .v9-preview-empty{border:1px dashed #d3e0ed;border-radius:13px;padding:55px 20px;text-align:center;color:#70829c;line-height:1.7;background:#f8fbff}
+#weekly .v9-preview-empty strong{display:block;color:#345274;font-size:15px;margin-bottom:7px}
+/* 실제 결재함: 조회 목록과 최종 승인 도구를 좌우 배치한다. */
+#weekly .v9-approval-heading{display:flex;justify-content:space-between;align-items:end;gap:14px;margin:8px 0 14px;padding:0 3px}
+#weekly .v9-approval-heading h3{font-size:20px;margin:3px 0 4px;color:#183453;letter-spacing:-.035em}
+#weekly .v9-approval-heading p{font-size:12px;color:#7a8da4;margin:0;line-height:1.6}
+#weekly .v9-approval-hint{font-size:11px;background:#e7f4f0;color:#13755c;border:1px solid #cce5dc;padding:7px 10px;border-radius:99px;white-space:nowrap;font-weight:790}
+#weekly .review-workspace{display:grid!important;grid-template-columns:minmax(275px,.75fr) minmax(0,1.45fr)!important;gap:17px!important}
+#weekly .review-workspace>.card{padding:0!important;overflow:hidden!important;min-width:0}
+#weekly .review-list-heading{padding:19px 20px 15px}
+#weekly .review-list-heading h3{color:#294562;font-size:15px}
+#weekly .review-document{padding:16px 19px!important;background:#fff!important;box-shadow:none!important;color:#293c55!important}
+#weekly .review-document:hover{background:#f4f8ff!important}
+#weekly .review-document.is-selected{background:#e9f2ff!important;box-shadow:inset 4px 0 0 var(--v9-blue)!important}
+#weekly .review-document strong{font-size:14px;font-weight:820;color:#263e5b}
+#weekly .review-detail{background:#fff}
+#weekly .v9-approval-ribbon{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;background:#edf3fa;border-bottom:1px solid #d9e5f1;padding:16px 22px;color:#36516f;font-size:12px;min-height:65px}
+#weekly .v9-approval-ribbon .v9-ribbon-title{display:block;font-size:12px;color:#17385b;font-weight:840}
+#weekly .v9-approval-ribbon .v9-ribbon-sub{display:block;font-size:11px;color:#63809c;margin-top:4px}
+#weekly .v9-approval-ribbon.pending{background:#fff7e8;border-color:#f4e1bf}
+#weekly .v9-approval-ribbon.approved{background:#eaf8f0;border-color:#c9e7d5}
+#weekly .v9-approval-ribbon.rejected{background:#fff0f1;border-color:#f3d3d8}
+#weekly .v9-ribbon-actions{display:flex;gap:7px;flex-wrap:wrap;align-items:center}
+#weekly .v9-ribbon-actions button{padding:9px 15px!important;border-radius:9px!important;min-height:37px;font-weight:800;white-space:nowrap}
+#weekly .v9-ribbon-actions .approve{background:#168267!important;color:#fff!important}
+#weekly .v9-ribbon-actions .reject{background:#fff!important;color:#b64b54!important;border:1px solid #e9adb6!important}
+#weekly .review-detail-top{padding:21px 22px}
+#weekly .review-detail-content{padding:20px 22px}
+#weekly .review-field{padding:13px 15px;border-radius:10px}
+#weekly .review-approval-step{border-radius:10px;text-align:left;padding:12px 11px}
+#weekly .review-approval-step b{font-size:12px}
+#weekly .review-data{max-width:100%;overflow-x:auto}
+#weekly #v7WeeklyDetails .review-actions .review-btn-approve,#weekly #v7WeeklyDetails .review-actions .review-btn-reject{display:none!important}
+#weekly #v7WeeklyDetails .review-actions .review-btn-secondary{background:#edf2fa!important;color:#345575!important}
+@media(max-width:1300px){#weekly .v9-compose-grid{grid-template-columns:minmax(300px,.9fr) minmax(0,1fr)}#weekly .v9-compose-form-pane,#weekly .v9-compose-preview-pane{padding:17px}#weekly .v9-compact-form{grid-template-columns:1fr!important}}
+@media(max-width:1100px){#weekly .v9-workflow{grid-template-columns:repeat(4,minmax(0,1fr))}#weekly .v9-workflow-arrow{display:none}#weekly .v9-workflow-step{gap:6px}#weekly .v9-step-number{width:28px;height:28px;min-width:28px}#weekly .v9-compose-grid{grid-template-columns:1fr}#weekly .v9-compact-form{grid-template-columns:repeat(2,minmax(0,1fr))!important}#weekly .review-workspace{grid-template-columns:minmax(0,1fr)!important}}
+@media(max-width:620px){#weekly .review-intro{padding:22px!important}#weekly .review-intro h2{font-size:23px}#weekly .v9-workflow{grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;padding:15px}#weekly .v9-workflow-step b{font-size:11px}#weekly .v9-compact-form{grid-template-columns:1fr!important}#weekly .v9-editor-head{flex-direction:column}#weekly #v7WeeklyEditorCard{padding:12px!important}#weekly .v9-compose-form-pane,#weekly .v9-compose-preview-pane{padding:15px;min-height:0}#weekly .v9-approval-heading{align-items:flex-start;flex-direction:column}#weekly .v9-compose-summary-action{display:none}#weekly .v9-approval-ribbon{padding:14px}#weekly .v9-ribbon-actions{width:100%}#weekly .v9-ribbon-actions button{flex:1}}
