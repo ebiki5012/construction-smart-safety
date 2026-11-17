@@ -20,6 +20,7 @@ const query=async(sql,args=[])=>{
  if(clean.startsWith('UPDATE weekly_risk_reviews SET status=\'PENDING\'')){weekly={...weekly,status:'PENDING',revision:args[1],snapshot:JSON.parse(args[2]),snapshot_hash:args[3],meeting_notes:args[4],attendees:args[5]};return {rows:[structuredClone(weekly)]}}
  if(clean.startsWith('SELECT * FROM weekly_risk_reviews WHERE id=$1 FOR UPDATE'))return {rows:weekly?[weekly]:[]};
  if(clean.startsWith('UPDATE weekly_risk_reviews SET status=$2')){weekly={...weekly,status:args[1],approved_by:args[2],decision_comment:args[3]};return {rows:[structuredClone(weekly)]}}
+ if(clean.startsWith('UPDATE weekly_risk_revisions SET approved_by')){const rev=revisions.find(r=>r.revision===args[3]);if(rev){rev.approved_by=args[1];rev.approved_at=args[2]}return {rows:[]}}
  if(clean.startsWith('INSERT INTO weekly_risk_revisions')){revisions.push({revision:args[1],snapshot:JSON.parse(args[2])});return {rows:[]}}
  if(clean.startsWith('INSERT INTO weekly_risk_events')){events.push({revision:args[1],action:args[2]||'SUBMIT'});return {rows:[]}}
  if(clean.startsWith('INSERT INTO weekly_risk_items')||clean.startsWith('DELETE FROM weekly_risk_items'))return {rows:[]};

@@ -212,6 +212,28 @@ async function init(){
  CREATE INDEX IF NOT EXISTS weekly_risk_events_idx ON weekly_risk_events(weekly_id,id);
  CREATE INDEX IF NOT EXISTS weekly_contractor_submissions_idx ON weekly_contractor_submissions(site_id,week_start);
  `);
+ // V7.2: reversible document retirement and approval history.
+ // Only additive columns; existing risk items, approvals and photos stay intact.
+ await pool.query(`
+ ALTER TABLE weekly_risk_reviews ADD COLUMN IF NOT EXISTS cancelled_by INT REFERENCES users(id);
+ ALTER TABLE weekly_risk_reviews ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMPTZ;
+ ALTER TABLE weekly_risk_reviews ADD COLUMN IF NOT EXISTS cancel_reason TEXT;
+ ALTER TABLE weekly_risk_reviews ADD COLUMN IF NOT EXISTS archived_by INT REFERENCES users(id);
+ ALTER TABLE weekly_risk_reviews ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ;
+ ALTER TABLE weekly_risk_reviews ADD COLUMN IF NOT EXISTS archived_reason TEXT;
+ ALTER TABLE weekly_risk_reviews ADD COLUMN IF NOT EXISTS archived_from_status TEXT;
+ ALTER TABLE weekly_risk_revisions ADD COLUMN IF NOT EXISTS approved_by INT REFERENCES users(id);
+ ALTER TABLE weekly_risk_revisions ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ;
+ ALTER TABLE weekly_risk_revisions ADD COLUMN IF NOT EXISTS cancelled_by INT REFERENCES users(id);
+ ALTER TABLE weekly_risk_revisions ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMPTZ;
+ ALTER TABLE weekly_risk_revisions ADD COLUMN IF NOT EXISTS cancel_reason TEXT;
+ ALTER TABLE record_approvals DROP CONSTRAINT IF EXISTS record_approvals_status_check;
+ ALTER TABLE record_approvals ADD CONSTRAINT record_approvals_status_check
+ CHECK (status IN ('DRAFT','SUBMITTED','APPROVED','REJECTED','CANCELLED'));
+ UPDATE weekly_risk_revisions r SET approved_by=w.approved_by,approved_at=w.approved_at
+ FROM weekly_risk_reviews w WHERE w.id=r.weekly_id AND w.revision=r.revision
+ AND w.status='APPROVED' AND r.approved_at IS NULL AND w.approved_at IS NOT NULL;
+ `);
  // Preserve the current contents of older weekly cases as a one-time migration snapshot.
  // This is an upgrade-time snapshot, NOT a claim to reconstruct their historical approval state.
  await pool.query(`UPDATE weekly_risk_reviews w SET snapshot=COALESCE((
@@ -471,9 +493,11 @@ app.get('/api/v7/weekly',auth,async(req,res,next)=>{try{
  const sid=Number(req.query.site_id),scope=await companyScope(req,sid);
  if(!scope.allowed)return res.status(403).json({error:'현장 접근 권한이 없습니다.'});
  const rows=await q(`SELECT w.id,w.site_id,w.week_start,w.meeting_notes,w.attendees,w.meeting_date,w.status,w.revision,w.submitted_at,w.approved_at,w.decision_comment,w.snapshot_hash,
- u.name submitted_by_name,a.name approved_by_name,jsonb_array_length(COALESCE(w.snapshot,'[]'::jsonb)) item_count
+ w.cancelled_at,w.cancel_reason,w.archived_at,u.name submitted_by_name,a.name approved_by_name,c.name cancelled_by_name,
+ jsonb_array_length(COALESCE(w.snapshot,'[]'::jsonb)) item_count
  FROM weekly_risk_reviews w LEFT JOIN users u ON u.id=w.submitted_by LEFT JOIN users a ON a.id=w.approved_by
- WHERE w.site_id=$1 AND ($2::int IS NULL OR EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(w.snapshot,'[]'::jsonb)) v WHERE v->>'contractor_id'=$2::text)) ORDER BY w.week_start DESC LIMIT 200`,[sid,scope.restricted?scope.contractor_id||-1:null]);
+ LEFT JOIN users c ON c.id=w.cancelled_by
+ WHERE w.site_id=$1 AND w.status<>'ARCHIVED' AND ($2::int IS NULL OR EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(w.snapshot,'[]'::jsonb)) v WHERE v->>'contractor_id'=$2::text)) ORDER BY w.week_start DESC LIMIT 200`,[sid,scope.restricted?scope.contractor_id||-1:null]);
  res.json(rows);
 }catch(e){next(e)}});
 app.get('/api/v7/weekly/preview',auth,async(req,res,next)=>{try{
@@ -490,7 +514,7 @@ app.post('/api/v7/weekly',auth,async(req,res,next)=>{try{
  if(!validMonday(start)||meetingDate&&!/^\d{4}-\d{2}-\d{2}$/.test(meetingDate))return res.status(400).json({error:'주차 또는 회의일 형식을 확인하세요.'});
  const client=await pool.connect();try{await client.query('BEGIN');
  const old=(await client.query('SELECT * FROM weekly_risk_reviews WHERE site_id=$1 AND week_start=$2 FOR UPDATE',[sid,start])).rows[0];
- if(old&&old.status!=='REJECTED'){await client.query('ROLLBACK');return res.status(409).json({error:'이미 상신 또는 승인된 주차입니다. 반려된 평가서만 재상신할 수 있습니다.'})}
+ if(old&&!['REJECTED','CANCELLED','ARCHIVED'].includes(old.status)){await client.query('ROLLBACK');return res.status(409).json({error:'이미 상신 또는 승인된 주차입니다. 반려·취소·정리된 평가서만 새 차수로 상신할 수 있습니다.'})}
  const items=(await client.query(weeklyRowsSql,[sid,start])).rows;
  if(!items.length){await client.query('ROLLBACK');return res.status(400).json({error:'해당 주차에 적용되는 위험성평가가 없습니다.'})}
  if(items.some(r=>!r.contractor_id&&r.entry_mode!=='PRIME')){
@@ -507,7 +531,8 @@ app.post('/api/v7/weekly',auth,async(req,res,next)=>{try{
  let w,revision=1;
  if(old){revision=Number(old.revision)+1;
   w=(await client.query(`UPDATE weekly_risk_reviews SET status='PENDING',revision=$2,snapshot=$3::jsonb,snapshot_hash=$4,
-  meeting_notes=$5,attendees=$6,meeting_date=$7,submitted_by=$8,submitted_at=now(),approved_by=NULL,approved_at=NULL,decision_comment=NULL,locked_at=NULL WHERE id=$1 RETURNING *`,
+  meeting_notes=$5,attendees=$6,meeting_date=$7,submitted_by=$8,submitted_at=now(),approved_by=NULL,approved_at=NULL,decision_comment=NULL,locked_at=NULL,
+  cancelled_by=NULL,cancelled_at=NULL,cancel_reason=NULL,archived_by=NULL,archived_at=NULL,archived_reason=NULL,archived_from_status=NULL WHERE id=$1 RETURNING *`,
   [old.id,revision,snapshot,hash,meeting,attendees,meetingDate,req.session.userId])).rows[0];
   await client.query('DELETE FROM weekly_risk_items WHERE weekly_id=$1',[old.id]);
  }else{
@@ -550,6 +575,7 @@ app.post('/api/v7/weekly/:id/decision',auth,async(req,res,next)=>{try{
  const updated=(await client.query(`UPDATE weekly_risk_reviews SET status=$2,approved_by=$3,approved_at=CASE WHEN $2='APPROVED' THEN now() ELSE NULL END,
  locked_at=CASE WHEN $2='APPROVED' THEN now() ELSE NULL END,decision_comment=$4 WHERE id=$1 RETURNING *`,
  [w.id,action==='APPROVE'?'APPROVED':'REJECTED',req.session.userId,comment])).rows[0];
+ if(action==='APPROVE')await client.query('UPDATE weekly_risk_revisions SET approved_by=$2,approved_at=$3 WHERE weekly_id=$1 AND revision=$4',[w.id,req.session.userId,updated.approved_at,w.revision]);
  await client.query('INSERT INTO weekly_risk_events(weekly_id,revision,action,actor_id,comment) VALUES($1,$2,$3,$4,$5)',[w.id,w.revision,action,req.session.userId,comment]);
  await client.query('COMMIT');res.json(updated);
  }catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}
@@ -560,15 +586,21 @@ app.get('/api/v8/weekly/:id/report',auth,async(req,res,next)=>{try{
  if(!w||!(await can(req,w.site_id)))return res.status(404).send('평가서를 찾을 수 없습니다.');
  const scope=await companyScope(req,w.site_id);
  const requestedRevision=Number(req.query.revision)||w.revision;
- const rev=await one('SELECT * FROM weekly_risk_revisions WHERE weekly_id=$1 AND revision=$2',[w.id,requestedRevision]);
+ const rev=await one(`SELECT r.*,a.name approved_by_name,c.name cancelled_by_name FROM weekly_risk_revisions r
+ LEFT JOIN users a ON a.id=r.approved_by LEFT JOIN users c ON c.id=r.cancelled_by
+ WHERE r.weekly_id=$1 AND r.revision=$2`,[w.id,requestedRevision]);
  if(!rev)return res.status(404).send('해당 차수의 평가서가 없습니다.');
  const items=(Array.isArray(rev.snapshot)?rev.snapshot:[]).filter(r=>!scope.restricted||Number(r.contractor_id)===scope.contractor_id);
  if(scope.restricted&&!items.length)return res.status(404).send('해당 업체의 평가서가 없습니다.');
  const currentRevision=Number(rev.revision)===Number(w.revision);
+ const printedApproval=rev.approved_by_name||(currentRevision?w.approved_by_name:null);
+ const printedApprovedAt=rev.approved_at||(currentRevision?w.approved_at:null);
+ const printedStatus=rev.cancelled_at?'승인 취소':rev.approved_at?'승인 완료':currentRevision?w.status:'상신·반려 차수';
+ const printedCancellation=rev.cancelled_at?`<br>승인 취소: ${h(rev.cancelled_by_name||'최고관리자')} · ${h(isoDate(rev.cancelled_at))} · 사유: ${h(rev.cancel_reason||'-')}`:'';
  const h=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
  const datestr=x=>h(isoDate(x));
  const body=items.map((r,i)=>`<tr><td>${i+1}</td><td>${h(r.contractor_name||(r.entry_mode==='PRIME'?'원청 자체 작성':'업체 정보 확인 필요'))}</td><td>${h(r.author_name||'-')}</td><td>${h(r.area)}</td><td>${h(r.work)}</td><td>${h(r.hazard)}</td><td>${h(r.frequency)}×${h(r.severity)}=${h(r.score)}</td><td>${h(r.measure)}</td></tr>`).join('');
- res.set({'Content-Type':'text/html; charset=utf-8','Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'}).send(`<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>${h(w.site_name)} 주간 위험성평가 ${datestr(w.week_start)}</title><style>body{font-family:'Malgun Gothic',Arial,sans-serif;color:#1e293b;padding:24px}table{width:100%;border-collapse:collapse;font-size:11px}th,td{border:1px solid #94a3b8;padding:6px;vertical-align:top;word-break:break-all}th{background:#e2e8f0}h1{font-size:22px}.meta{line-height:1.9}.note{white-space:pre-wrap;border:1px solid #cbd5e1;padding:10px}@media print{button{display:none}@page{size:A4 landscape;margin:12mm}body{padding:0}}</style></head><body><h1>주간 통합 위험성평가서</h1><div class="meta">현장: ${h(w.site_name)}<br>평가 주차: ${datestr(w.week_start)} ~ ${datestr(new Date(new Date(w.week_start).getTime()+6*86400000))}<br>회의일: ${datestr(rev.meeting_date)||'-'} · 참석자: ${h(rev.attendees)||'-'}<br>상신자: ${h(w.submitted_by_name)||'-'} · 최종 승인자: ${currentRevision?h(w.approved_by_name)||'-':'과거 차수 (현재 승인 정보와 별개)'} · 승인일: ${currentRevision?datestr(w.approved_at)||'-':'-'}<br>상태: ${currentRevision?h(w.status):'과거 차수 보관본'} · 차수: ${h(rev.revision)} · 평가 항목: ${items.length}건</div><h3>회의 및 검토 내용</h3><div class="note">${h(rev.meeting_notes)}</div><h3>주간 위험요인 통합 목록</h3><table><thead><tr><th>No.</th><th>협력업체</th><th>작성자</th><th>구역</th><th>작업</th><th>위험요인</th><th>빈도×강도</th><th>감소대책</th></tr></thead><tbody>${body}</tbody></table><p>승인 당시 평가 항목 스냅샷을 출력한 조회용 보고서입니다. 인쇄 대화상자에서 PDF로 저장할 수 있습니다. 법정 전자서명 또는 별도 법정 서식을 대체하지 않습니다. 기존 V7 이전 평가서의 최초 스냅샷은 업그레이드 당시 보존된 내용일 수 있습니다.</p><button onclick="window.print()">인쇄 / PDF 저장</button></body></html>`);
+ res.set({'Content-Type':'text/html; charset=utf-8','Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'}).send(`<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>${h(w.site_name)} 주간 위험성평가 ${datestr(w.week_start)}</title><style>body{font-family:'Malgun Gothic',Arial,sans-serif;color:#1e293b;padding:24px}table{width:100%;border-collapse:collapse;font-size:11px}th,td{border:1px solid #94a3b8;padding:6px;vertical-align:top;word-break:break-all}th{background:#e2e8f0}h1{font-size:22px}.meta{line-height:1.9}.note{white-space:pre-wrap;border:1px solid #cbd5e1;padding:10px}@media print{button{display:none}@page{size:A4 landscape;margin:12mm}body{padding:0}}</style></head><body><h1>주간 통합 위험성평가서</h1><div class="meta">현장: ${h(w.site_name)}<br>평가 주차: ${datestr(w.week_start)} ~ ${datestr(new Date(new Date(w.week_start).getTime()+6*86400000))}<br>회의일: ${datestr(rev.meeting_date)||'-'} · 참석자: ${h(rev.attendees)||'-'}<br>상신자: ${h(w.submitted_by_name)||'-'} · 최종 승인자: ${h(printedApproval||'-')} · 승인일: ${datestr(printedApprovedAt)}<br>상태: ${h(printedStatus)} · 차수: ${h(rev.revision)} · 평가 항목: ${items.length}건${printedCancellation}</div><h3>회의 및 검토 내용</h3><div class="note">${h(rev.meeting_notes)}</div><h3>주간 위험요인 통합 목록</h3><table><thead><tr><th>No.</th><th>협력업체</th><th>작성자</th><th>구역</th><th>작업</th><th>위험요인</th><th>빈도×강도</th><th>감소대책</th></tr></thead><tbody>${body}</tbody></table><p>승인 당시 평가 항목 스냅샷을 출력한 조회용 보고서입니다. 인쇄 대화상자에서 PDF로 저장할 수 있습니다. 법정 전자서명 또는 별도 법정 서식을 대체하지 않습니다. 기존 V7 이전 평가서의 최초 스냅샷은 업그레이드 당시 보존된 내용일 수 있습니다.</p><button onclick="window.print()">인쇄 / PDF 저장</button></body></html>`);
 }catch(e){next(e)}});
 // TBM: separate site-manager approval queue, independent of weekly risk approval.
 app.post('/api/v8/tbm/:id/submit',auth,async(req,res,next)=>{try{
@@ -1015,7 +1047,9 @@ app.patch("/api/records/:type/:id",auth,async(req,res,next)=>{try{
  const u=await user(req);if(u.role!=="ADMIN")return res.status(403).json({error:"최고관리자만 기존 기록을 수정할 수 있습니다."});
  const approval=await one("SELECT status FROM record_approvals WHERE record_type=$1 AND record_id=$2",[type,record.id]);
  const workflowApproval=await one('SELECT status FROM approval_cases WHERE record_type=$1 AND record_id=$2',[type,record.id]);
- if(approval?.status==='APPROVED'||workflowApproval?.status==='APPROVED')return res.status(409).json({error:'승인 완료된 기록입니다. 변경하려면 별도 승인 취소 절차가 필요합니다.'});
+ if(['SUBMITTED','APPROVED'].includes(approval?.status)||['PENDING','APPROVED'].includes(workflowApproval?.status))return res.status(409).json({error:'상신·승인된 기록입니다. 먼저 최고관리자 정리 화면에서 결재를 취소해 주세요.'});
+ if(type==='risk'&&await one(`SELECT id FROM weekly_risk_reviews WHERE site_id=$1 AND status IN ('PENDING','APPROVED')
+  AND COALESCE(snapshot,'[]'::jsonb) @> jsonb_build_array(jsonb_build_object('id',$2::int)) LIMIT 1`,[record.site_id,record.id]))return res.status(409).json({error:'이 위험요인은 주간 평가서의 상신·승인본에 포함되어 있습니다. 먼저 주간 결재를 취소해 주세요.'});
  const allowed={risk:["risk_date","period_start","period_end","area","work","hazard","frequency","severity","measure"],tbm:["tbm_date","team","work_name","people","hazard","measure"],action:["item","manager","due_date","status"],custom:["record_date","form_data"]}[type];
  const fields=Object.keys(req.body).filter(k=>allowed.includes(k));if(!fields.length)return res.status(400).json({error:"수정할 내용이 없습니다."});
  const nextRow={...record};for(const k of fields)nextRow[k]=req.body[k]??null;
@@ -1031,9 +1065,14 @@ app.patch("/api/records/:type/:id",auth,async(req,res,next)=>{try{
 }catch(e){next(e)}});
 app.delete("/api/records/:type/:id",auth,async(req,res,next)=>{try{
  const type=req.params.type,table=EDIT_TABLE[type];if(!table)return res.status(400).json({error:"종류 오류"});if(!(await adminOnly(req,res)))return;
+ const reason=v10Reason(req.body);if(!reason)return res.status(400).json({error:'기록 정리 사유를 5~500자로 입력하세요.'});
  const record=await one(`SELECT * FROM ${table} WHERE id=$1 AND deleted_at IS NULL`,[req.params.id]);if(!record)return res.status(404).json({error:"기록이 없습니다."});
- const approval=await one("SELECT status FROM approval_cases WHERE record_type=$1 AND record_id=$2",[type,record.id]);if(approval?.status==="APPROVED")return res.status(409).json({error:"승인 완료 기록은 삭제할 수 없습니다."});
- const client=await pool.connect();try{await client.query("BEGIN");await client.query(`UPDATE ${table} SET deleted_at=now() WHERE id=$1`,[record.id]);await client.query("INSERT INTO record_audit(record_type,record_id,site_id,actor_id,action,before_data) VALUES($1,$2,$3,$4,'DELETE',$5)",[type,record.id,record.site_id,req.session.userId,JSON.stringify(record)]);await client.query("COMMIT");res.json({ok:true})}catch(e){await client.query("ROLLBACK");throw e}finally{client.release()}
+ const approval=await one("SELECT status FROM approval_cases WHERE record_type=$1 AND record_id=$2",[type,record.id]);
+ const direct=await one("SELECT status FROM record_approvals WHERE record_type=$1 AND record_id=$2",[type,record.id]);
+ if(['PENDING','APPROVED'].includes(approval?.status)||['SUBMITTED','APPROVED'].includes(direct?.status))return res.status(409).json({error:'상신·승인된 기록입니다. 먼저 최고관리자 정리 화면에서 결재를 취소해 주세요.'});
+ if(type==='risk'&&await one(`SELECT id FROM weekly_risk_reviews WHERE site_id=$1 AND status IN ('PENDING','APPROVED')
+  AND COALESCE(snapshot,'[]'::jsonb) @> jsonb_build_array(jsonb_build_object('id',$2::int)) LIMIT 1`,[record.site_id,record.id]))return res.status(409).json({error:'주간 평가서에 포함된 위험요인입니다. 해당 주차의 결재를 취소한 후 정리해 주세요.'});
+ const client=await pool.connect();try{await client.query("BEGIN");await client.query(`UPDATE ${table} SET deleted_at=now() WHERE id=$1`,[record.id]);await client.query("INSERT INTO record_audit(record_type,record_id,site_id,actor_id,action,before_data,after_data) VALUES($1,$2,$3,$4,'DELETE',$5,$6)",[type,record.id,record.site_id,req.session.userId,JSON.stringify(record),JSON.stringify({reason})]);await client.query("COMMIT");res.json({ok:true})}catch(e){await client.query("ROLLBACK");throw e}finally{client.release()}
 }catch(e){next(e)}});
 app.get("/api/audit",auth,async(req,res,next)=>{try{if(!(await adminOnly(req,res)))return;const sid=Number(req.query.site_id);if(!Number.isSafeInteger(sid)||sid<1)return res.status(400).json({error:"현장을 선택하세요."});res.json(await q("SELECT a.id,a.record_type,a.record_id,a.action,a.created_at,u.name actor FROM record_audit a LEFT JOIN users u ON u.id=a.actor_id WHERE a.site_id=$1 ORDER BY a.id DESC LIMIT 200",[sid]))}catch(e){next(e)}});
 app.put("/api/custom/forms/:id/site-visibility",auth,async(req,res,next)=>{try{if(!(await adminOnly(req,res)))return;const sid=Number(req.body.site_id);if(typeof req.body.visible!=="boolean"||!await one("SELECT id FROM sites WHERE id=$1",[sid]))return res.status(400).json({error:"현장 또는 표시 설정 오류"});await pool.query("INSERT INTO custom_form_sites(form_id,site_id,visible) VALUES($1,$2,$3) ON CONFLICT(form_id,site_id) DO UPDATE SET visible=EXCLUDED.visible",[req.params.id,sid,req.body.visible]);res.json({ok:true})}catch(e){next(e)}});
@@ -1069,10 +1108,11 @@ app.get('/api/admin/trash',auth,async(req,res,next)=>{try{
 }catch(e){next(e)}});
 app.post('/api/admin/trash/:type/:id/restore',auth,async(req,res,next)=>{try{
  if(!(await adminOnly(req,res)))return;const type=req.params.type,table=EDIT_TABLE[type];if(!table)return res.status(400).json({error:'기록 종류 오류'});
+ const reason=v10Reason(req.body);if(!reason)return res.status(400).json({error:'복원 사유를 5~500자로 입력하세요.'});
  const client=await pool.connect();try{await client.query('BEGIN');
  const record=(await client.query(`UPDATE ${table} SET deleted_at=NULL WHERE id=$1 AND deleted_at IS NOT NULL RETURNING *`,[req.params.id])).rows[0];
  if(!record){await client.query('ROLLBACK');return res.status(404).json({error:'휴지통에 기록이 없습니다.'})}
- await client.query("INSERT INTO record_audit(record_type,record_id,site_id,actor_id,action,after_data) VALUES($1,$2,$3,$4,'RESTORE',$5)",[type,record.id,record.site_id,req.session.userId,JSON.stringify(record)]);
+ await client.query("INSERT INTO record_audit(record_type,record_id,site_id,actor_id,action,after_data) VALUES($1,$2,$3,$4,'RESTORE',$5)",[type,record.id,record.site_id,req.session.userId,JSON.stringify({...record,restore_reason:reason})]);
  await client.query('COMMIT');res.json({ok:true});
  }catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}
 }catch(e){next(e)}});
@@ -1086,11 +1126,11 @@ app.get('/api/v9/approval-overview',auth,async(req,res,next)=>{try{
  const sid=Number(req.query.site_id);
  if(!(await can(req,sid,['MANAGER'])))return res.status(403).json({error:'현장 관리자 권한이 필요합니다.'});
  const [weekly,tbm,legacy]=await Promise.all([
-  q(`SELECT w.id,w.week_start,w.status,w.revision,w.submitted_at,w.approved_at,w.decision_comment,
-    u.name submitted_by_name,a.name approved_by_name,
+  q(`SELECT w.id,w.week_start,w.status,w.revision,w.submitted_at,w.approved_at,w.decision_comment,w.cancelled_at,w.cancel_reason,w.archived_at,
+    u.name submitted_by_name,a.name approved_by_name,c.name cancelled_by_name,
     COALESCE(jsonb_array_length(w.snapshot),0) item_count
     FROM weekly_risk_reviews w LEFT JOIN users u ON u.id=w.submitted_by
-    LEFT JOIN users a ON a.id=w.approved_by WHERE w.site_id=$1 ORDER BY w.week_start DESC LIMIT 100`,[sid]),
+    LEFT JOIN users a ON a.id=w.approved_by LEFT JOIN users c ON c.id=w.cancelled_by WHERE w.site_id=$1 ORDER BY w.week_start DESC LIMIT 100`,[sid]),
   q(`SELECT t.id,t.tbm_date,t.work_name,t.team,t.contractor_id,t.entry_mode,c.name contractor_name,
     u.name author_name,a.status,a.comment,a.updated_at,reviewer.name reviewer_name
     FROM record_approvals a JOIN tbms t ON t.id=a.record_id AND a.record_type='tbm'
@@ -1137,6 +1177,117 @@ app.patch('/api/v9/records/:kind/:id/contractor',auth,async(req,res,next)=>{try{
   const after=(await client.query(`UPDATE ${table} SET contractor_id=$1,entry_mode=$2 WHERE id=$3 RETURNING *`,[cid,self?'PRIME':'PROXY',id])).rows[0];
   await client.query(`INSERT INTO record_audit(record_type,record_id,site_id,actor_id,action,before_data,after_data)
    VALUES($1,$2,$3,$4,'CONTRACTOR_ASSIGN',$5,$6)`,[kind,id,sid,req.session.userId,JSON.stringify(before),JSON.stringify(after)]);
+  await client.query('COMMIT');res.json(after);
+ }catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}
+}catch(e){next(e)}});
+// V7.2 site-wide administrative console. All destructive-looking actions are
+// reversible status changes/soft-deletes and all require a global ADMIN.
+app.get('/api/v10/admin/cleanup',auth,async(req,res,next)=>{try{
+ if(!(await adminOnly(req,res)))return;
+ const sid=Number(req.query.site_id);
+ if(!Number.isSafeInteger(sid)||sid<1||!await one('SELECT id FROM sites WHERE id=$1',[sid]))return res.status(400).json({error:'현장을 선택하세요.'});
+ const [weekly,risk,tbm,action,custom,legacy]=await Promise.all([
+  q(`SELECT w.id,w.week_start,w.status,w.revision,w.submitted_at,w.approved_at,w.cancelled_at,w.cancel_reason,w.archived_at,w.archived_reason,
+   u.name submitted_by_name,a.name approved_by_name,COALESCE(jsonb_array_length(w.snapshot),0) item_count
+   FROM weekly_risk_reviews w LEFT JOIN users u ON u.id=w.submitted_by LEFT JOIN users a ON a.id=w.approved_by
+   WHERE w.site_id=$1 ORDER BY w.week_start DESC LIMIT 150`,[sid]),
+  q(`SELECT r.id,r.risk_date record_date,r.work title,r.deleted_at,r.entry_mode,c.name contractor_name,u.name author_name,
+   ra.status record_approval,ac.status legacy_approval,
+   (SELECT w.status FROM weekly_risk_reviews w WHERE w.site_id=r.site_id AND w.status IN ('PENDING','APPROVED')
+    AND COALESCE(w.snapshot,'[]'::jsonb) @> jsonb_build_array(jsonb_build_object('id',r.id)) LIMIT 1) weekly_lock
+   FROM risks r LEFT JOIN users u ON u.id=r.author_id LEFT JOIN contractors c ON c.id=r.contractor_id
+   LEFT JOIN record_approvals ra ON ra.record_type='risk' AND ra.record_id=r.id
+   LEFT JOIN approval_cases ac ON ac.record_type='risk' AND ac.record_id=r.id
+   WHERE r.site_id=$1 ORDER BY r.id DESC LIMIT 150`,[sid]),
+  q(`SELECT t.id,t.tbm_date record_date,t.work_name title,t.deleted_at,t.entry_mode,c.name contractor_name,u.name author_name,
+   ra.status record_approval,ac.status legacy_approval
+   FROM tbms t LEFT JOIN users u ON u.id=t.created_by LEFT JOIN contractors c ON c.id=t.contractor_id
+   LEFT JOIN record_approvals ra ON ra.record_type='tbm' AND ra.record_id=t.id
+   LEFT JOIN approval_cases ac ON ac.record_type='tbm' AND ac.record_id=t.id
+   WHERE t.site_id=$1 ORDER BY t.id DESC LIMIT 150`,[sid]),
+  q(`SELECT a.id,a.due_date record_date,COALESCE(a.issue_text,a.item) title,a.deleted_at,c.name contractor_name,u.name author_name,
+   ra.status record_approval,ac.status legacy_approval
+   FROM actions a LEFT JOIN users u ON u.id=a.created_by LEFT JOIN contractors c ON c.id=a.contractor_id
+   LEFT JOIN record_approvals ra ON ra.record_type='action' AND ra.record_id=a.id
+   LEFT JOIN approval_cases ac ON ac.record_type='action' AND ac.record_id=a.id
+   WHERE a.site_id=$1 ORDER BY a.id DESC LIMIT 150`,[sid]),
+  q(`SELECT r.id,r.record_date,r.deleted_at,f.title title,u.name author_name,
+   ra.status record_approval,ac.status legacy_approval
+   FROM custom_records r JOIN custom_forms f ON f.id=r.form_id LEFT JOIN users u ON u.id=r.created_by
+   LEFT JOIN record_approvals ra ON ra.record_type='custom' AND ra.record_id=r.id
+   LEFT JOIN approval_cases ac ON ac.record_type='custom' AND ac.record_id=r.id
+   WHERE r.site_id=$1 ORDER BY r.id DESC LIMIT 150`,[sid]),
+  q('SELECT id,record_type,record_id,status,created_at FROM approval_cases WHERE site_id=$1 ORDER BY id DESC LIMIT 100',[sid])
+ ]);
+ res.json({weekly,risk,tbm,action,custom,legacy});
+}catch(e){next(e)}});
+
+function v10Reason(body){const reason=String(body?.reason||'').trim();return reason.length>=5&&reason.length<=500?reason:null}
+app.post('/api/v10/admin/weekly/:id/cancel',auth,async(req,res,next)=>{try{
+ if(!(await adminOnly(req,res)))return;
+ const reason=v10Reason(req.body);if(!reason)return res.status(400).json({error:'취소 사유를 5~500자로 입력하세요.'});
+ const client=await pool.connect();try{await client.query('BEGIN');
+  const before=(await client.query('SELECT * FROM weekly_risk_reviews WHERE id=$1 FOR UPDATE',[req.params.id])).rows[0];
+  if(!before||!['PENDING','APPROVED'].includes(before.status)){await client.query('ROLLBACK');return res.status(409).json({error:'승인 대기 또는 승인 완료된 평가서만 취소할 수 있습니다.'})}
+  const after=(await client.query(`UPDATE weekly_risk_reviews SET status='CANCELLED',cancelled_at=now(),cancelled_by=$2,cancel_reason=$3 WHERE id=$1 RETURNING *`,[before.id,req.session.userId,reason])).rows[0];
+  await client.query('UPDATE weekly_risk_revisions SET cancelled_at=$3,cancelled_by=$2,cancel_reason=$4 WHERE weekly_id=$1 AND revision=$5',[before.id,req.session.userId,after.cancelled_at,reason,before.revision]);
+  await client.query('INSERT INTO weekly_risk_events(weekly_id,revision,action,actor_id,comment) VALUES($1,$2,$3,$4,$5)',[before.id,before.revision,before.status==='APPROVED'?'CANCEL_APPROVAL':'WITHDRAW',req.session.userId,reason]);
+  await client.query("INSERT INTO record_audit(record_type,record_id,site_id,actor_id,action,before_data,after_data) VALUES('weekly',$1,$2,$3,'CANCEL',$4,$5)",[before.id,before.site_id,req.session.userId,JSON.stringify(before),JSON.stringify(after)]);
+  await client.query('COMMIT');res.json(after);
+ }catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}
+}catch(e){next(e)}});
+
+app.post('/api/v10/admin/weekly/:id/archive',auth,async(req,res,next)=>{try{
+ if(!(await adminOnly(req,res)))return;
+ const reason=v10Reason(req.body);if(!reason)return res.status(400).json({error:'정리 사유를 5~500자로 입력하세요.'});
+ const client=await pool.connect();try{await client.query('BEGIN');
+  const before=(await client.query('SELECT * FROM weekly_risk_reviews WHERE id=$1 FOR UPDATE',[req.params.id])).rows[0];
+  if(!before||!['CANCELLED','REJECTED','DRAFT'].includes(before.status)){await client.query('ROLLBACK');return res.status(409).json({error:'승인된 평가서는 먼저 승인 취소하고, 결재 대기 문서는 먼저 상신 취소해 주세요.'})}
+  const after=(await client.query(`UPDATE weekly_risk_reviews SET status='ARCHIVED',archived_from_status=$2,archived_at=now(),archived_by=$3,archived_reason=$4 WHERE id=$1 RETURNING *`,[before.id,before.status,req.session.userId,reason])).rows[0];
+  await client.query('INSERT INTO weekly_risk_events(weekly_id,revision,action,actor_id,comment) VALUES($1,$2,\'ARCHIVE\',$3,$4)',[before.id,before.revision,req.session.userId,reason]);
+  await client.query("INSERT INTO record_audit(record_type,record_id,site_id,actor_id,action,before_data,after_data) VALUES('weekly',$1,$2,$3,'ARCHIVE',$4,$5)",[before.id,before.site_id,req.session.userId,JSON.stringify(before),JSON.stringify(after)]);
+  await client.query('COMMIT');res.json(after);
+ }catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}
+}catch(e){next(e)}});
+
+app.post('/api/v10/admin/weekly/:id/restore',auth,async(req,res,next)=>{try{
+ if(!(await adminOnly(req,res)))return;
+ const reason=v10Reason(req.body);if(!reason)return res.status(400).json({error:'복원 사유를 5~500자로 입력하세요.'});
+ const client=await pool.connect();try{await client.query('BEGIN');
+  const before=(await client.query('SELECT * FROM weekly_risk_reviews WHERE id=$1 FOR UPDATE',[req.params.id])).rows[0];
+  if(!before||before.status!=='ARCHIVED'){await client.query('ROLLBACK');return res.status(409).json({error:'정리함에 있는 평가서가 아닙니다.'})}
+  const after=(await client.query(`UPDATE weekly_risk_reviews SET status=$2,archived_at=NULL,archived_by=NULL,archived_reason=NULL,archived_from_status=NULL WHERE id=$1 RETURNING *`,[before.id,before.archived_from_status||'CANCELLED'])).rows[0];
+  await client.query("INSERT INTO weekly_risk_events(weekly_id,revision,action,actor_id,comment) VALUES($1,$2,'RESTORE',$3,$4)",[before.id,before.revision,req.session.userId,reason]);
+  await client.query("INSERT INTO record_audit(record_type,record_id,site_id,actor_id,action,before_data,after_data) VALUES('weekly',$1,$2,$3,'RESTORE',$4,$5)",[before.id,before.site_id,req.session.userId,JSON.stringify(before),JSON.stringify(after)]);
+  await client.query('COMMIT');res.json(after);
+ }catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}
+}catch(e){next(e)}});
+
+app.post('/api/v10/admin/records/:type/:id/cancel-approval',auth,async(req,res,next)=>{try{
+ if(!(await adminOnly(req,res)))return;
+ const type=req.params.type,table=EDIT_TABLE[type],reason=v10Reason(req.body);
+ if(!table||!reason)return res.status(400).json({error:'기록 종류와 취소 사유(5자 이상)를 확인하세요.'});
+ const client=await pool.connect();try{await client.query('BEGIN');
+  const record=(await client.query(`SELECT * FROM ${table} WHERE id=$1 FOR UPDATE`,[req.params.id])).rows[0];
+  if(!record){await client.query('ROLLBACK');return res.status(404).json({error:'기록을 찾을 수 없습니다.'})}
+  const before=(await client.query('SELECT * FROM record_approvals WHERE record_type=$1 AND record_id=$2 FOR UPDATE',[type,record.id])).rows[0];
+  if(!before||!['APPROVED','SUBMITTED'].includes(before.status)){await client.query('ROLLBACK');return res.status(409).json({error:'승인 대기 또는 승인된 구버전 기록만 취소할 수 있습니다.'})}
+  const after=(await client.query("UPDATE record_approvals SET status='CANCELLED',updated_at=now() WHERE id=$1 RETURNING *",[before.id])).rows[0];
+  if(type==='tbm')await client.query("INSERT INTO tbm_approval_events(tbm_id,site_id,action,actor_id,comment) VALUES($1,$2,'CANCEL',$3,$4)",[record.id,record.site_id,req.session.userId,reason]);
+  await client.query("INSERT INTO record_audit(record_type,record_id,site_id,actor_id,action,before_data,after_data) VALUES($1,$2,$3,$4,'CANCEL_APPROVAL',$5,$6)",[type,record.id,record.site_id,req.session.userId,JSON.stringify(before),JSON.stringify({after,reason})]);
+  await client.query('COMMIT');res.json(after);
+ }catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}
+}catch(e){next(e)}});
+
+app.post('/api/v10/admin/legacy-case/:id/cancel',auth,async(req,res,next)=>{try{
+ if(!(await adminOnly(req,res)))return;
+ const reason=v10Reason(req.body);if(!reason)return res.status(400).json({error:'취소 사유를 5자 이상 입력하세요.'});
+ const client=await pool.connect();try{await client.query('BEGIN');
+  const before=(await client.query('SELECT * FROM approval_cases WHERE id=$1 FOR UPDATE',[req.params.id])).rows[0];
+  if(!before||!['PENDING','APPROVED'].includes(before.status)){await client.query('ROLLBACK');return res.status(409).json({error:'취소 가능한 기존 결재가 아닙니다.'})}
+  const after=(await client.query("UPDATE approval_cases SET status='CANCELLED',updated_at=now() WHERE id=$1 RETURNING *",[before.id])).rows[0];
+  await client.query("INSERT INTO approval_decisions(case_id,step,action,comment,actor_id) VALUES($1,$2,'CANCEL',$3,$4)",[before.id,before.current_step,reason,req.session.userId]);
+  await client.query("INSERT INTO record_audit(record_type,record_id,site_id,actor_id,action,before_data,after_data) VALUES('legacy_case',$1,$2,$3,'CANCEL',$4,$5)",[before.id,before.site_id,req.session.userId,JSON.stringify(before),JSON.stringify(after)]);
   await client.query('COMMIT');res.json(after);
  }catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}
 }catch(e){next(e)}});

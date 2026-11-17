@@ -16,13 +16,14 @@ body{background:#f3f6fb;color:var(--ui-ink)}
 .review-intro p{margin:0;color:var(--ui-muted);line-height:1.6;font-size:14px}
 .review-eyebrow{font-size:11px!important;font-weight:800;letter-spacing:.05em;color:var(--brand)!important}
 .review-site{max-width:340px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:#fff;border:1px solid var(--ui-line);border-radius:100px;padding:10px 15px;color:#41506c;font-size:12px}
-.review-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-bottom:16px}
+.review-metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:16px}
 .review-metric{background:#fff;padding:16px 18px;border:1px solid var(--ui-line);border-radius:14px;display:flex;align-items:center;justify-content:space-between;gap:10px}
 .review-metric span{font-size:13px;color:var(--ui-muted);font-weight:700}
 .review-metric strong{font-size:26px;color:var(--ui-ink);line-height:1}
 .review-metric:first-child{border-left:4px solid #ea9c3a}
 .review-metric:nth-child(2){border-left:4px solid #2ca66a}
 .review-metric:nth-child(3){border-left:4px solid #d76b71}
+.review-metric:nth-child(4){border-left:4px solid #8995ad}
 .review-workspace{display:grid;grid-template-columns:minmax(285px,360px) minmax(0,1fr);gap:16px;align-items:start}
 .review-workspace>.card{margin:0;border:1px solid var(--ui-line);box-shadow:0 5px 22px #18243a07;border-radius:16px;padding:0;min-width:0;overflow:hidden}
 .review-list-heading{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:19px 18px 13px;border-bottom:1px solid var(--ui-line)}
@@ -49,6 +50,7 @@ body{background:#f3f6fb;color:var(--ui-ink)}
 .review-pill.PENDING,.review-pill.SUBMITTED{background:#fff3d9;color:#93631c}
 .review-pill.APPROVED{background:#dff6e8;color:#18724a}
 .review-pill.REJECTED{background:#ffe6e6;color:#b2383d}
+.review-pill.CANCELLED,.review-pill.ARCHIVED{background:#edeff3;color:#475569}
 .review-detail-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:18px 0}
 .review-field{border:1px solid var(--ui-line);background:#fbfcfe;padding:12px 14px;border-radius:10px;min-width:0}
 .review-field span{display:block;font-size:12px;color:var(--ui-muted);margin-bottom:6px}
@@ -57,6 +59,7 @@ body{background:#f3f6fb;color:var(--ui-ink)}
 .review-approval-step{padding:12px;border:1px solid var(--ui-line);border-radius:10px;background:#f8fafc;text-align:center}
 .review-approval-step.done{border-color:#b4e1c7;background:#effbf3;color:#267248}
 .review-approval-step.current{border-color:#efc98b;background:#fff8e9;color:#885c18}
+.review-approval-step.cancelled{border-color:#d2d7e3;background:#f2f4f8;color:#5a6478}
 .review-approval-step small{display:block;font-size:11px;opacity:.8;margin-top:5px}
 .review-data{overflow-x:auto;border:1px solid var(--ui-line);border-radius:10px;margin-top:10px}
 .review-data table{min-width:680px}
@@ -68,6 +71,8 @@ body{background:#f3f6fb;color:var(--ui-ink)}
 .review-btn-approve{background:#177a52}
 .review-btn-reject{background:#b94d50}
 .review-note{margin:13px 0;padding:12px 14px;background:#f5f8fd;border-radius:10px;white-space:pre-wrap;line-height:1.6;font-size:13px}
+.review-cancel-notice{border:1px solid #d4dae5;border-left:4px solid #708098;background:#f7f9fc;padding:14px 18px;margin-top:16px;border-radius:10px;font-size:13px;color:#334155}
+.review-cancel-notice p{margin:7px 0;white-space:pre-wrap}.review-cancel-notice small{color:#6b778c}
 .review-history{border-top:1px solid var(--ui-line);padding:16px 24px 24px;background:#fbfcff;font-size:12px}
 .review-history .review-section-heading{margin-top:0}
 .review-history-event{border-left:3px solid #d6dfed;padding:8px 10px;margin:5px 0;color:#617086;line-height:1.5}
@@ -76,7 +81,30 @@ body{background:#f3f6fb;color:var(--ui-ink)}
 .review-compose>summary:hover{background:#f8fbff}
 .review-compose>.card{border:0;border-top:1px solid var(--ui-line);margin:0;border-radius:0;box-shadow:none}
 .review-list-loading{padding:25px 18px;color:#64748b}
+.v10-weekboard{padding:22px 24px!important;border:1px solid var(--ui-line)!important;border-radius:16px!important;box-shadow:none!important;margin:0 0 16px!important;max-width:100%}
+.v10-weekboard-header{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;padding-bottom:17px}
+.v10-weekboard-header h3{margin:4px 0 3px;font-size:19px;letter-spacing:-.035em}
+.v10-weekboard-header p{font-size:12px;margin:0}
+.v10-weekboard-toolbar{display:flex;align-items:end;gap:8px;flex-wrap:wrap}
+.v10-weekboard-toolbar label{font-size:12px;font-weight:700;color:#65738a;margin:0 2px 12px 0;white-space:nowrap}
+.v10-weekboard-toolbar input{width:160px;min-width:150px;padding:10px 11px;font-size:13px}
+.v10-weekboard-toolbar button{padding:10px 14px;font-size:13px;white-space:nowrap}
+.v10-week-cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px}
+.v10-week-stat{padding:13px 15px;background:#f6f8fc;border:1px solid #edf0f6;border-radius:11px;min-width:0}
+.v10-week-stat span,.v10-week-stat small{display:block;font-size:11px;color:#64748b;line-height:1.55}
+.v10-week-stat strong{display:block;font-size:19px;line-height:1.5;letter-spacing:-.035em;color:#233855;white-space:normal;overflow-wrap:anywhere}
+.v10-company-status{border-top:1px solid var(--ui-line);margin-top:15px;padding-top:8px}
+.v10-status-heading{display:flex;justify-content:space-between;align-items:center;gap:12px;font-size:13px;padding:8px 0}
+.v10-status-heading span{font-size:12px;color:#64748b}
+.v10-company-list{max-height:286px;overflow:auto;scrollbar-width:thin;padding-right:4px}
+.v10-company-row{display:grid;grid-template-columns:minmax(160px,1.6fr) minmax(110px,1fr) minmax(135px,auto);align-items:center;gap:14px;border-top:1px solid #f0f3f8;padding:11px 4px;font-size:13px}
+.v10-company-row b{font-weight:700}.v10-company-row>span:nth-child(2){color:#6a7790}
+.v10-mini-pill{justify-self:end;font-size:12px;font-weight:700;padding:5px 10px;border-radius:20px}
+.v10-mini-pill.ready{background:#e1f4e9;color:#14764a}.v10-mini-pill.waiting{background:#fff3df;color:#986012}
+.v10-company-help{font-size:13px;color:#64748b;line-height:1.6;margin:8px 0}
+.v10-week-document{display:flex;justify-content:space-between;align-items:center;gap:12px;border-top:1px solid var(--ui-line);margin-top:8px;padding:14px 4px 2px;font-size:13px}
+.v10-week-document button{flex-shrink:0;padding:8px 14px}
 @media(max-width:1180px){.review-workspace{grid-template-columns:minmax(260px,300px) minmax(0,1fr)}.review-detail-content{padding:18px}}
-@media(max-width:980px){.review-workspace{grid-template-columns:minmax(0,1fr)}.review-document-list{max-height:330px;min-height:120px}.review-metrics{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:980px){.review-workspace{grid-template-columns:minmax(0,1fr)}.review-document-list{max-height:330px;min-height:120px}.review-metrics{grid-template-columns:repeat(4,minmax(0,1fr))}.v10-weekboard-header{align-items:start;flex-direction:column}.v10-week-cards{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:900px){.app{grid-template-columns:minmax(0,1fr)}.app>.side{position:relative;height:auto;overflow:visible}.app>main.main{padding:18px 14px 35px}.review-intro{flex-direction:column}.review-site{max-width:100%}}
-@media(max-width:560px){.review-metrics{gap:6px}.review-metric{padding:11px;display:block}.review-metric strong{display:block;margin-top:8px}.review-detail-grid{grid-template-columns:minmax(0,1fr)}.review-approval-step{font-size:12px;padding:8px}.review-detail-top{padding:16px}.review-detail-content{padding:15px}}
+@media(max-width:560px){.review-metrics{grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}.review-metric{padding:11px}.review-metric strong{display:block;margin-top:8px}.review-detail-grid{grid-template-columns:minmax(0,1fr)}.review-approval-step{font-size:12px;padding:8px}.review-detail-top{padding:16px}.review-detail-content{padding:15px}.v10-weekboard{padding:16px!important}.v10-weekboard-toolbar{width:100%}.v10-weekboard-toolbar label{flex-basis:100%;margin:0}.v10-weekboard-toolbar input{flex:1}.v10-week-stat strong{font-size:16px}.v10-company-row{grid-template-columns:minmax(0,1fr) auto;gap:4px 10px}.v10-company-row>span:nth-child(2){grid-column:1}.v10-mini-pill{grid-column:2;grid-row:1/span 2}.v10-week-document{flex-direction:column;align-items:start}}

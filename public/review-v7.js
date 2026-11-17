@@ -26,7 +26,7 @@
     date.setUTCDate(date.getUTCDate() + 6);
     return `${str} ~ ${date.toISOString().slice(0,10)}`;
   };
-  const statusName = {PENDING:'승인 대기',APPROVED:'승인 완료',REJECTED:'반려',SUBMITTED:'승인 대기'};
+  const statusName = {PENDING:'승인 대기',APPROVED:'승인 완료',REJECTED:'반려',SUBMITTED:'승인 대기',CANCELLED:'승인 취소',ARCHIVED:'정리 보관'};
   const pill = status => `<span class="review-pill ${clean(status)}">${statusName[status] || clean(status)}</span>`;
   const field = (label, value) => `<div class="review-field"><span>${clean(label)}</span><strong>${clean(value || '-')}</strong></div>`;
 
@@ -64,7 +64,7 @@
       this.syncSite();
       state.weeklyMode = mode;
       state.weeklyRows = Array.isArray(rows) ? rows : [];
-      for (const [key,id] of [['PENDING','reviewPending'],['APPROVED','reviewApproved'],['REJECTED','reviewRejected']]) {
+      for (const [key,id] of [['PENDING','reviewPending'],['APPROVED','reviewApproved'],['REJECTED','reviewRejected'],['CANCELLED','reviewCancelled']]) {
         if (byId(id)) byId(id).textContent = String(state.weeklyRows.filter(r => r.status === key).length);
       }
       this.filterWeekly(true);
@@ -75,14 +75,14 @@
       const rows = state.weeklyRows
         .filter(r => state.weeklyMode !== 'completed' || r.status === 'APPROVED')
         .filter(r => filter === 'ALL' || r.status === filter)
-        .sort((a,b) => (a.status === 'PENDING' ? 0 : a.status === 'REJECTED' ? 1 : 2) - (b.status === 'PENDING' ? 0 : b.status === 'REJECTED' ? 1 : 2) || String(b.week_start).localeCompare(String(a.week_start)));
+        .sort((a,b) => (a.status === 'PENDING' ? 0 : a.status === 'REJECTED' ? 1 : a.status === 'CANCELLED' ? 2 : 3) - (b.status === 'PENDING' ? 0 : b.status === 'REJECTED' ? 1 : b.status === 'CANCELLED' ? 2 : 3) || String(b.week_start).localeCompare(String(a.week_start)));
       host.innerHTML = rows.length ? rows.map(r => {
         const id = Number(r.id);
         return `<button type="button" class="review-document ${state.selectedWeekly === id ? 'is-selected' : ''}" data-review-id="${id}" onclick="reviewUi.selectWeekly(${id})">
           <div class="review-document-row"><span class="review-meta">위험성평가 · ${clean(weekPeriod(r.week_start))}</span>${pill(r.status)}</div>
           <strong>${clean(weekName(r.week_start))} 위험성평가</strong>
           <p>${clean(siteName())} · 위험요인 ${Number(r.item_count)||0}건 · ${Number(r.revision)||1}차</p>
-          <p>상신: ${clean(r.submitted_by_name||'작성자 미확인')} ${r.approved_by_name?' · 승인: '+clean(r.approved_by_name):''}</p>
+          <p>상신: ${clean(r.submitted_by_name||'작성자 미확인')} ${r.status==='CANCELLED'?' · 취소: '+clean(r.cancelled_by_name||'최고관리자'):r.approved_by_name?' · 승인: '+clean(r.approved_by_name):''}</p>
         </button>`;
       }).join('') : '<div class="review-empty"><div class="illustration">📭</div><b>해당 상태의 평가서가 없습니다</b><p>다른 상태로 조회하거나 아래에서 주차별 평가서를 취합할 수 있습니다.</p></div>';
       if (selectFirst && rows.length) {
@@ -109,17 +109,17 @@
       byId('v7WeeklyList')?.querySelectorAll('[data-review-id]').forEach(button => button.classList.toggle('is-selected',Number(button.dataset.reviewId) === id));
       const companyCount = new Set(rows.map(x => x.contractor_id ? String(x.contractor_id) : x.entry_mode === 'PRIME' ? 'PRIME' : 'LEGACY_UNASSIGNED')).size;
       const track = [
-        `<div class="review-approval-step done"><b>① 협력업체 작성</b><small>위험요인 ${rows.length}건</small></div>`,
-        `<div class="review-approval-step done"><b>② 원청 취합·상신</b><small>${clean(r.submitted_by_name||'-')}</small></div>`,
-        `<div class="review-approval-step ${r.status==='APPROVED'?'done':r.status==='PENDING'?'current':''}"><b>③ 원청 최종 승인</b><small>${r.status==='APPROVED'?clean(r.approved_by_name||'승인 완료'):r.status==='REJECTED'?'반려됨':'승인 대기 중'}</small></div>`
+        `<div class="review-approval-step done"><b>① 위험요인 취합</b><small>위험요인 ${rows.length}건</small></div>`,
+        `<div class="review-approval-step done"><b>② 원청 통합 상신</b><small>${clean(r.submitted_by_name||'-')}</small></div>`,
+        `<div class="review-approval-step ${r.status==='APPROVED'?'done':r.status==='PENDING'?'current':r.status==='CANCELLED'?'cancelled':''}"><b>③ 원청 최종 결재</b><small>${r.status==='APPROVED'?clean(r.approved_by_name||'승인 완료'):r.status==='REJECTED'?'반려됨':r.status==='CANCELLED'?'관리자 승인 취소':'승인 대기 중'}</small></div>`
       ].join('');
       const approvalBtns = r.status === 'PENDING'
         ? (typeof v8IsManager === 'function' && v8IsManager()
           ? `<button class="review-btn-approve" onclick="decideV7Weekly(${id},'APPROVE')">✓ 주간 평가서 통합 승인</button><button class="review-btn-reject" onclick="decideV7Weekly(${id},'REJECT')">↩ 반려</button>`
           : '<span class="review-pill PENDING">원청 현장관리자 승인 대기</span>')
-        : (r.status === 'REJECTED' && typeof v8IsManager === 'function' && v8IsManager()
-          ? `<button onclick="v8ReloadRejected('${clean(day(r.week_start))}')">반려 평가서 수정·재상신 준비</button>`
-          : `<span class="review-pill ${clean(r.status)}">${r.status==='APPROVED'?'결재가 완료된 평가서입니다.':'반려된 평가서입니다.'}</span>`);
+        : (['REJECTED','CANCELLED'].includes(r.status) && typeof v8IsManager === 'function' && v8IsManager()
+          ? `<button onclick="v8ReloadRejected('${clean(day(r.week_start))}')">평가서 수정·재상신 준비</button>`
+          : `<span class="review-pill ${clean(r.status)}">${r.status==='APPROVED'?'결재가 완료된 평가서입니다.':r.status==='CANCELLED'?'승인 취소된 평가서입니다.':'반려된 평가서입니다.'}</span>`);
       const contents = rows.length
         ? `<div class="review-data"><table><thead><tr><th>협력업체</th><th>작성자</th><th>작업</th><th>위험요인</th><th>위험도</th><th>감소대책</th><th>사진</th></tr></thead><tbody>${rows.map(x => `<tr><td>${clean(companyLabel(x))}</td><td>${clean(x.author_name||'-')}</td><td>${clean(x.work||'-')}</td><td>${clean(x.hazard||'-')}</td><td>${Number(x.frequency)||1}×${Number(x.severity)||1}=${Number(x.score)||0}</td><td>${clean(x.measure||'-')}</td><td>${Number(x.id)>0?`<button class="review-btn-secondary" style="padding:7px" onclick="openPhotos('risk',${Number(x.id)})">📷</button>`:'-'}</td></tr>`).join('')}</tbody></table></div>`
         : '<p class="review-note">이 평가서에 포함된 위험요인이 없습니다.</p>';
@@ -129,10 +129,11 @@
         <h4 class="review-section-heading">위험성평가 항목 (${rows.length}건)</h4>${contents}
         <h4 class="review-section-heading">회의 내용</h4><div class="review-note">${clean(r.meeting_notes||'작성된 회의 내용이 없습니다.')}</div>
         ${r.status==='REJECTED'?`<h4 class="review-section-heading" style="color:#b2383d">반려 사유</h4><div class="review-note">${clean(r.decision_comment||'-')}</div>`:''}
+        ${r.status==='CANCELLED'?`<div class="review-cancel-notice"><b>최고관리자 승인·상신 취소</b><p>처리자: ${clean(r.cancelled_by_name||'-')} · 처리일: ${dateTime(r.cancelled_at)}</p><p>사유: ${clean(r.cancel_reason||'-')}</p><small>기존 평가서, 과거 승인자와 승인 시각은 그대로 보관합니다.</small></div>`:''}
         <div class="review-actions">${approvalBtns}<button class="review-btn-secondary" onclick="window.open('/api/v8/weekly/${id}/report','_blank')">🖨 평가서 인쇄 / PDF</button></div></div>`;
-      const history = (Array.isArray(events)?events:[]).map(e => `<div class="review-history-event">${dateTime(e.created_at)} · ${clean(e.actor_name||'-')} · ${clean(({SUBMIT:'상신',APPROVE:'승인',REJECT:'반려'})[e.action] || e.action)}${e.comment?' · '+clean(e.comment):''}</div>`).join('');
+      const history = (Array.isArray(events)?events:[]).map(e => `<div class="review-history-event">${dateTime(e.created_at)} · ${clean(e.actor_name||'-')} · ${clean(({SUBMIT:'상신',APPROVE:'승인',REJECT:'반려',CANCEL_APPROVAL:'승인 취소',WITHDRAW:'상신 취소',ARCHIVE:'정리 보관',RESTORE:'복원'})[e.action] || e.action)}${e.comment?' · '+clean(e.comment):''}</div>`).join('');
       const versions = (Array.isArray(revisions)?revisions:[]).map(v => `<button class="review-btn-secondary" style="padding:6px 10px;font-size:12px;margin:2px" onclick="window.open('/api/v8/weekly/${id}/report?revision=${Number(v.revision)}','_blank')">${Number(v.revision)}차 (${Number(v.item_count)}건)</button>`).join('');
-      if (byId('v8WeeklyEvents')) byId('v8WeeklyEvents').innerHTML = `<div class="review-history"><h4 class="review-section-heading">상신 · 승인 · 반려 이력</h4>${history||'<span class="muted">등록된 이력이 없습니다.</span>'}${versions?'<h4 class="review-section-heading">평가서 차수 보관</h4>'+versions:''}</div>`;
+      if (byId('v8WeeklyEvents')) byId('v8WeeklyEvents').innerHTML = `<div class="review-history"><h4 class="review-section-heading">결재 · 취소 · 정리 이력</h4>${history||'<span class="muted">등록된 이력이 없습니다.</span>'}${versions?'<h4 class="review-section-heading">평가서 차수 보관</h4>'+versions:''}</div>`;
     },
     renderTbmList(rows) {
       this.syncSite();
