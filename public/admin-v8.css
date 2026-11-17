@@ -1,0 +1,46 @@
+/* V8 관리자 센터 - 현장 화면과 통일된 운영 콘솔 */
+:root{--ac-ink:#18304c;--ac-mute:#60748f;--ac-line:#dfe7f1;--ac-bg:#f3f6fb}
+body{font-family:'Pretendard','Noto Sans KR','Malgun Gothic',system-ui,sans-serif;background:var(--ac-bg)!important;color:var(--ac-ink)!important;font-size:14px;line-height:1.55}
+header{background:linear-gradient(115deg,#132640,#23436b)!important;min-height:101px;padding:25px clamp(20px,4vw,65px)!important;box-shadow:0 8px 30px #182f5325;gap:18px}
+header strong{font-size:21px;letter-spacing:-.04em}header a{color:#d9eaff!important;font-size:13px;text-underline-offset:3px}
+main{max-width:1510px!important;margin:27px auto!important;padding:0 clamp(14px,3vw,45px) 70px!important;min-width:0}
+nav{display:flex;flex-wrap:wrap;gap:7px!important;background:#fff;border:1px solid #e0e9f3;border-radius:15px;padding:11px!important;box-shadow:0 6px 22px #18355809;margin:0 0 22px!important;position:sticky;top:0;z-index:15}
+nav button{border-radius:9px!important;min-height:40px;padding:9px 13px!important;font-weight:760;background:#f1f5fa;color:#4b617d;transition:background .15s}
+nav button.active{background:#244e8c!important;color:#fff!important}
+nav button:hover:not(.active){background:#e2eaf5}
+h2{font-size:22px;line-height:1.35;letter-spacing:-.035em}h3{font-size:16px;letter-spacing:-.025em}h4{font-size:14px}
+.card{background:#fff!important;border:1px solid var(--ac-line)!important;border-radius:16px!important;padding:24px!important;box-shadow:0 10px 32px #15315808!important;margin-bottom:16px!important;min-width:0;overflow-wrap:anywhere}
+.muted{color:var(--ac-mute)!important;font-size:13px;line-height:1.7}
+.grid{gap:14px!important}.grid>*{min-width:0}
+button,.btn{border-radius:10px!important;min-height:38px;font-size:13px;line-height:1.4;font-weight:730;padding:10px 14px;background:#245bcb}
+button.secondary{background:#e8eff9!important;color:#3a5376!important}button.danger{background:#b8394c!important}
+input,select,textarea{min-height:41px;border-radius:10px!important;background:#fff;border:1px solid #d3deea!important;color:#1f3650;padding:10px 12px!important;box-shadow:0 1px 2px #182e5304}
+textarea{min-height:100px}label{color:#4d6480;font-size:12px;font-weight:780;margin-bottom:6px}
+table{border-collapse:collapse}td,th{border-bottom:1px solid #e9eef4;padding:13px 15px!important;vertical-align:middle}th{background:#f4f7fb!important;color:#5a6e86;font-size:12px;font-weight:830}
+td{color:#314a66;font-size:13px}tr:hover td{background:#fafcff}
+.table{max-width:100%;border:1px solid #e1e8f1;border-radius:12px;overflow-x:auto}
+.v10-hero{background:linear-gradient(110deg,#f8fbff,#eef4fc)!important;border-color:#d9e4f1!important;gap:16px!important}
+.v10-hero h2{font-size:23px}.v10-kicker{font-size:11px;letter-spacing:.08em;color:#2762a1}
+.v10-stat{border:1px solid #dce7f3;border-radius:12px;background:#f7f9fd;padding:16px 19px}
+.v10-stat b{color:#1e3c60;font-size:28px}
+.v10-filters{gap:13px!important}.v10-search{min-width:0}
+.v10-status{font-size:11px;padding:5px 9px;font-weight:810;border-radius:999px}
+.v10-actions{gap:7px}.v10-actions button{font-size:11px;line-height:1.45;padding:7px 10px;min-height:32px}
+.v10-dialog{width:min(94vw,570px)!important;border:0!important;border-radius:17px!important;padding:30px!important;box-shadow:0 25px 85px #091c3955!important}
+.v10-dialog::backdrop{background:#0c2034a3;backdrop-filter:blur(2px)}
+.v10-dialog h3{margin-top:2px;font-size:22px;color:#182e4d}
+.v10-dialog textarea{width:100%;min-height:140px}
+.v10-dialog-actions{gap:9px;margin-top:22px}
+.v10-hint{background:#f8fbff;border:1px solid #e2ebf5;border-radius:9px;padding:11px 13px}
+.row{gap:10px}.row>button,.row>.btn{flex:0 0 auto}
+.item{border-top:1px solid #e6edf4;padding:16px 0}
+summary{cursor:pointer;font-weight:750;color:#2a4567}
+@media(max-width:820px){header{padding:20px!important}main{padding:0 14px 50px!important}.card{padding:18px!important}nav{position:relative;flex-wrap:nowrap;overflow-x:auto;white-space:nowrap}.v10-hero{flex-direction:column;align-items:flex-start}.v10-stats{grid-template-columns:repeat(2,minmax(0,1fr))!important}.v10-filters{grid-template-columns:repeat(2,minmax(0,1fr))!important}}
+@media(max-width:520px){.v10-filters{grid-template-columns:minmax(0,1fr)!important}.v10-search{grid-column:auto!important}.v10-dialog{padding:18px!important}.v10-dialog-actions{flex-direction:column-reverse}.v10-dialog-actions button{width:100%}}
+.v8-admin-overlay{position:fixed;inset:0;z-index:10000;background:#102139a0;display:grid;place-items:center;padding:16px;backdrop-filter:blur(3px)}
+.v8-admin-dialog{width:min(94vw,545px);max-height:94vh;overflow-y:auto;background:#fff;border-radius:18px;padding:29px;box-shadow:0 25px 80px #09172d66}
+.v8-admin-dialog-head{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;border-bottom:1px solid #e5edf4;padding-bottom:13px;margin-bottom:17px}
+.v8-admin-dialog-head h2{margin:0 0 3px;color:#173253}.v8-admin-dialog-head p{margin:0;color:#71859d;font-size:12px}
+.v8-admin-dialog textarea{width:100%;min-height:135px;resize:vertical}
+.v8-admin-error{color:#b9334a;min-height:18px;font-size:12px}
+.v8-admin-actions{display:flex;justify-content:flex-end;gap:9px;padding-top:14px;border-top:1px solid #e8eef5}

@@ -21,7 +21,7 @@
 .v7-subnav button.on{background:var(--brand);color:#fff}
 @media(max-width:900px){.app{grid-template-columns:minmax(0,1fr)}}
 @media(max-width:900px){.side{padding:14px}.main{padding:12px}.v8-cards{grid-template-columns:repeat(2,minmax(0,1fr))}}
-</style></head><body>
+</style><link rel="stylesheet" href="/design-v8.css?v=20261117b"></head><body>
 <div id="login" class="login"><div class="loginbox"><h2>🏗️ 건설현장 스마트 안전관리</h2><p class="muted">현장별 공유형 위험성평가 · TBM · 조치관리</p>
 <form id="lf"><p><label>일반 아이디 또는 이메일</label><input id="email" autocomplete="username" placeholder="일반 아이디 또는 이메일"></p><p><label>비밀번호</label><input id="pw" type="password" ></p><button style="width:100%">로그인</button></form></div></div>
 <div id="app" class="app hidden"><aside class="side"><div class="brand" id="brandTitle">🏗️ 스마트 안전관리</div><div id="who" class="muted"></div><div class="build-label">주간평가·승인 취소 관리 · V7.2 / 2026.11.16</div><div class="nav">
@@ -379,4 +379,4 @@ async function v8OpenSource(type,id,siteId){if(String(siteId)!==String(sid)){sid
  else if(type==='tbm'){v7TbmTab('lookup');$('tbmRange').value='all';changeRecordRange('tbm');await loadTbms();const row=$('tbmTable').querySelector(`[data-record-id="${id}"]`);row?.scrollIntoView({behavior:'smooth',block:'center'});if(row)row.style.background='#fef9c3'}
  else if(type==='action'){v8ActionTab('register');await loadActions();const row=$('actionTable').querySelector(`[data-record-id="${id}"]`);row?.scrollIntoView({behavior:'smooth',block:'center'});if(row)row.style.background='#fef9c3'}
 }
-</script><script src="/review-v7.js?v=20261116d"></script></body></html>
+</script><script src="/review-v7.js?v=20261116d"></script><script src="/design-v8.js?v=20261117b"></script></body></html>

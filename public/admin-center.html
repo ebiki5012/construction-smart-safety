@@ -115,4 +115,4 @@ async function loadPhotoTrash(){await run(async()=>{const rows=await api('/api/v
 async function restorePhoto(source,id){await run(async()=>{await api('/api/v5/photo-trash/'+source+'/'+id+'/restore','POST',{});await loadPhotoTrash();msg('사진 복원 완료')})}
 function openReport(){const from=v('reportFrom'),to=v('reportTo');if(from&&to&&from>to)return msg('기간을 확인하세요');const url='/api/v5/report?'+new URLSearchParams({site_id:site(),type:v('exportType'),from,to});window.open(url,'_blank','noopener')}
 
-init();</script></body></html>
+init();</script><link rel="stylesheet" href="/admin-v8.css?v=20261117b"><script src="/admin-v8.js?v=20261117b"></script></body></html>
