@@ -193,7 +193,7 @@
       const btn=document.createElement('button');btn.id='v8MobileMenu';btn.className='v8-mobile-menu';btn.type='button';btn.textContent='☰ 메뉴';btn.setAttribute('aria-expanded','false');btn.onclick=()=>{const open=side.classList.toggle('v8-nav-open');btn.textContent=open?'× 닫기':'☰ 메뉴';btn.setAttribute('aria-expanded',String(open))};side.appendChild(btn);
       side.querySelectorAll('.nav button[data-p]').forEach(item=>item.addEventListener('click',()=>{if(window.innerWidth<=900){side.classList.remove('v8-nav-open');btn.textContent='☰ 메뉴';btn.setAttribute('aria-expanded','false')}}));
     }
-    const badge=document.querySelector('.side .build-label');if(badge)badge.textContent='SAFETY WORKSPACE · V11 / 결재 상태 통일';
+    const badge=document.querySelector('.side .build-label');if(badge)badge.textContent='SAFETY WORKSPACE · V12 / 통합 위험성평가 관리';
     const description=document.querySelector('.top>.muted, .top>div>.muted');if(description)description.textContent='현장별 업무 · 작성부터 결재와 이력까지 한곳에서 관리';
   }
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',initUI);else initUI();

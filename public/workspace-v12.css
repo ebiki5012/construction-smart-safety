@@ -1,0 +1,116 @@
+/* V12 — 하나의 문서 목록, 하나의 상태/결재 표시, 필요할 때만 업무 패널 열기 */
+:root{--v12-ink:#14263e;--v12-muted:#60738b;--v12-line:#e0e8f1;--v12-blue:#2054ad;--v12-soft:#f4f7fb}
+#weekly.v12-weekly{max-width:1450px;margin:0 auto;color:var(--v12-ink)}
+#weekly .v12-page-heading{display:flex;justify-content:space-between;align-items:center;gap:20px;margin:0 0 16px}
+#weekly .v12-kicker{font-size:11px;font-weight:850;letter-spacing:.08em;color:#607b9c}
+#weekly .v12-page-heading h2{font-size:26px;line-height:1.22;letter-spacing:-.055em;margin:5px 0 6px;color:#152b45}
+#weekly .v12-page-heading p{font-size:14px;color:#66788d;margin:0}
+#weekly .v12-site-name{font-size:12px;max-width:280px;text-align:right;line-height:1.45;color:#536d8b;font-weight:750;padding:8px 12px;border:1px solid var(--v12-line);border-radius:10px;background:white}
+#weekly .v12-week-toolbar{display:flex;gap:22px;align-items:center;padding:14px 20px;margin-bottom:14px;box-shadow:none;border-color:var(--v12-line)}
+#weekly .v12-week-toolbar>label{font-size:12px;font-weight:850;color:#516781;min-width:205px}
+#weekly .v12-week-toolbar input{margin-top:6px;max-width:230px;font-size:15px;font-weight:750;height:42px}
+#weekly .v12-week-state{flex:1;display:flex;flex-direction:column;gap:5px}
+#weekly .v12-week-state>span{font-size:12px;color:var(--v12-muted)}
+#weekly .v12-week-state>strong{font-size:17px;font-weight:900}
+#weekly .v12-top-action{display:flex;justify-content:flex-end}
+#weekly .v12-top-cta{background:#edf4ff;color:#2459a0;border:1px solid #c9dbf6;font-size:14px;font-weight:850;padding:11px 16px}
+#weekly .v12-top-hint{font-size:12px;color:#728298}
+#weekly .v12-main-layout{display:grid;grid-template-columns:minmax(265px,310px) minmax(0,1fr);align-items:start;gap:14px}
+#weekly .v12-document-sidebar{padding:17px;position:sticky;top:15px;min-width:0;box-shadow:none;border-color:var(--v12-line)}
+#weekly .v12-list-title{display:flex;justify-content:space-between;align-items:center;margin-bottom:13px}
+#weekly .v12-list-title h3{font-size:18px;font-weight:900;margin:3px 0 0;letter-spacing:-.04em}
+#weekly .v12-refresh{background:#f0f4f9;color:#416081;border:1px solid #dbe5f0;width:36px;height:36px;padding:0;font-size:20px}
+#weekly .v12-current-week{width:100%;text-align:left;display:flex;flex-direction:column;align-items:start;gap:4px;background:#f3f7fc;border:1px solid #d6e4f5;color:#294967;padding:14px;border-radius:12px;margin-bottom:14px}
+#weekly .v12-current-week.active{background:#eaf2ff;border-color:#9ebeea;box-shadow:inset 3px 0 #2660bc}
+#weekly .v12-current-week>span{font-size:11px;font-weight:900;color:#4169a2}
+#weekly .v12-current-week>strong{font-size:15px;font-weight:900;color:#183a62}
+#weekly .v12-current-week>small{font-size:12px;color:#56718e}
+#weekly .v12-filter-label{display:block;font-size:12px;font-weight:800;color:#667c95;margin-bottom:6px}
+#weekly #reviewStatusFilter{width:100%;margin-bottom:10px;height:40px;font-size:13px}
+#weekly .review-document-list{max-height:65vh;overflow-y:auto;scrollbar-width:thin;padding-right:3px}
+#weekly .review-document{margin:0 0 7px;padding:12px!important;box-shadow:none!important;border:1px solid #e0e7f0!important;border-radius:10px!important}
+#weekly .review-document.is-selected{border-color:#95b9e6!important;background:#eef5ff!important;box-shadow:inset 3px 0 #2861b3!important}
+#weekly .review-document strong{font-size:14px!important;line-height:1.45}
+#weekly .review-document p{font-size:12px!important;line-height:1.55;margin:5px 0 0!important;color:#687c92}
+#weekly .review-document-row{gap:8px}
+#weekly .review-document-row .review-meta{font-size:11px!important}
+#weekly .review-document .v11-list-seal{display:none!important} /* 결재 상태는 목록 배지 하나만 */
+#weekly .v12-content-column{min-width:0;display:grid;gap:14px}
+#weekly .v12-focus{padding:20px 23px;box-shadow:none;border-color:var(--v12-line)}
+#weekly .v12-focus-primary{display:flex;justify-content:space-between;gap:20px;align-items:center}
+#weekly .v12-focus-title{flex:1;min-width:0}
+#weekly .v12-focus-title h3{font-size:26px;letter-spacing:-.055em;margin:6px 0;color:#183958;font-weight:950}
+#weekly .v12-focus-title p{font-size:14px;line-height:1.5;color:#60758c;margin:0}
+#weekly .v12-stamp-slot{display:flex;justify-content:center;min-width:155px}
+#weekly .v12-stamp-slot .v11-stamp{transform:rotate(-2deg);width:140px;min-width:140px;padding:9px;border-width:2px;box-shadow:none}
+#weekly .v12-stamp-slot .v11-stamp strong{font-size:20px}
+#weekly .v12-stamp-slot .v11-stamp small{font-size:10px}
+#weekly .v12-empty-stamp{border:2px dashed #c7d2df;color:#718298;background:#f7f9fc;border-radius:11px;padding:13px 12px;text-align:center;width:140px;display:grid;gap:4px}
+#weekly .v12-empty-stamp span,#weekly .v12-empty-stamp small{font-size:11px}
+#weekly .v12-empty-stamp strong{font-size:19px}
+#weekly .v12-accountability{display:grid;grid-template-columns:.65fr 1.4fr 1fr 1.35fr;gap:0;margin-top:16px;background:#f6f8fb;border:1px solid #e7edf4;border-radius:11px}
+#weekly .v12-accountability>div{padding:12px 13px;display:flex;flex-direction:column;gap:5px;min-width:0}
+#weekly .v12-accountability>div+div{border-left:1px solid #e0e8f0}
+#weekly .v12-accountability span{font-size:11px;font-weight:750;color:#6c8096}
+#weekly .v12-accountability strong{font-size:14px;font-weight:900;overflow-wrap:anywhere;line-height:1.35}
+#weekly .v12-accountability small{font-size:11px;color:#71849b;line-height:1.4}
+#weekly .v12-focus-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:14px}
+#weekly .v12-main-button{min-height:43px;background:#2459b5!important;color:#fff!important;font-size:14px!important;font-weight:900!important;padding:10px 17px!important;border-radius:9px}
+#weekly .v12-main-button.success{background:#127655!important}
+#weekly .v12-text-button{min-height:40px;padding:9px 12px!important;background:#edf3fa!important;color:#365b82!important;font-size:13px!important;font-weight:800!important}
+#weekly .v12-text-button.danger{background:#fff0f1!important;color:#a43e4c!important}
+#weekly .v12-done-label{font-size:13px;font-weight:850;color:#13734e;background:#eaf8f0;padding:11px 13px;border-radius:8px}
+#weekly .v12-awaiting{font-size:13px;color:#8e6326;font-weight:800}
+#weekly .v12-work-area{padding:0 20px 20px;box-shadow:none;border-color:var(--v12-line);min-width:0}
+#weekly .v12-task-tabs{display:flex;gap:3px;flex-wrap:wrap;border-bottom:1px solid #e2eaf3;margin-bottom:17px;overflow-x:auto}
+#weekly .v12-task-tabs button{border-radius:0;background:transparent!important;color:#61758d!important;padding:15px 12px!important;font-size:14px!important;font-weight:800!important;white-space:nowrap;border-bottom:3px solid transparent}
+#weekly .v12-task-tabs button.active{color:#174f9b!important;border-bottom-color:#2864bc;background:#f5f9ff!important}
+#weekly .v12-task-panel{min-width:0}
+#weekly .v12-task-panel.hidden{display:none!important}
+#weekly .v12-panel-heading{margin:3px 0 15px}
+#weekly .v12-panel-heading h3{font-size:19px;font-weight:900;margin:0 0 5px}
+#weekly .v12-panel-heading p{font-size:13px;color:#6a7d94;margin:0}
+#weekly #v12PanelDocument #v7WeeklyDetailsCard{border:0;box-shadow:none;padding:0;background:transparent}
+#weekly #v12PanelDocument .v10-doc-header,#weekly #v12PanelDocument .v10-glance,#weekly #v12PanelDocument .v10-doc-notice,#weekly #v9ApprovalRibbon{display:none!important}
+#weekly #v12PanelDocument .v10-doc{padding:0}
+#weekly #v12PanelDocument .v10-document-risks{margin-top:0}
+#weekly #v12PanelDocument .v10-section-title{margin:0 0 13px}
+#weekly #v12PanelDocument .v10-section-title h3{font-size:19px}
+#weekly #v12PanelDocument .v10-risk-card{margin-bottom:12px}
+#weekly #v12PanelDocument .v10-disclosure{margin-top:11px}
+#weekly #v12PanelDocument .v10-doc-footer{margin-top:14px}
+#weekly .v12-draft-summary>h3{font-size:19px;margin:4px 0 7px}
+#weekly .v12-draft-summary>p{font-size:13px;color:#62768e;line-height:1.6;margin:0 0 16px}
+#weekly .v12-draft-summary .v10-week-cards{margin-bottom:16px}
+#weekly .v12-draft-summary .v10-company-status{margin-top:0}
+#weekly #v12PanelWrite .card,#weekly #v12PanelLookup .card,#weekly #v12PanelTemplate .card{border:0!important;box-shadow:none!important;padding:0!important}
+#weekly #v12PanelWrite h3,#weekly #v12PanelLookup h3{font-size:19px}
+#weekly #v12PanelWrite .form{grid-template-columns:repeat(2,minmax(0,1fr))}
+#weekly #v12PanelWrite input,#weekly #v12PanelWrite select,#weekly #v12PanelWrite textarea{font-size:14px}
+#weekly #v12PanelCompose .review-compose{border:0!important;margin:0!important;padding:0!important}
+#weekly #v12PanelCompose .review-compose>summary{display:none}
+#weekly #v12PanelCompose #v7WeeklyEditorCard{border:0!important;padding:0!important;box-shadow:none!important}
+#weekly #v12PanelCompose .v9-editor-head{display:none}
+#weekly #v12PanelCompose .v9-compose-grid{gap:16px}
+#weekly #v12PanelCompose .v9-compose-form-pane,#weekly #v12PanelCompose .v9-compose-preview-pane{min-width:0}
+#weekly .v12-legacy-hidden{display:none!important}
+#weekly .review-empty{padding:25px 12px}
+/* 메뉴는 업무별로 한 줄씩. 하위 중복 메뉴는 V12에서 사용하지 않는다. */
+.nav #v12RiskNav,.nav #v12TbmNav,.nav #v12ActionNav{font-size:14px;font-weight:800;min-height:44px}
+.v12-sub-tabs{display:flex;gap:7px;flex-wrap:wrap;margin:0 0 15px;background:#fff;padding:10px;border:1px solid #e0e8f1;border-radius:13px}
+.v12-sub-tabs button{background:#eef3f9!important;color:#47637f!important;font-size:14px;font-weight:800}
+.v12-sub-tabs button.active{background:#2459b5!important;color:white!important}
+@media(max-width:1180px){#weekly .v12-main-layout{grid-template-columns:minmax(230px,270px) minmax(0,1fr)}#weekly .v12-accountability{grid-template-columns:repeat(2,minmax(0,1fr))}#weekly .v12-accountability>div:nth-child(3){border-left:0;border-top:1px solid #e0e8f0}#weekly .v12-accountability>div:nth-child(4){border-top:1px solid #e0e8f0}}
+@media(max-width:900px){#weekly .v12-main-layout{grid-template-columns:minmax(0,1fr)}#weekly .v12-document-sidebar{position:static}#weekly .review-document-list{max-height:250px}#weekly .v12-week-toolbar{flex-wrap:wrap}#weekly .v12-week-state{min-width:170px}#weekly .v12-site-name{max-width:200px}}
+@media(max-width:650px){#weekly .v12-page-heading{align-items:flex-start;flex-direction:column}#weekly .v12-page-heading h2{font-size:23px}#weekly .v12-site-name{max-width:100%;text-align:left}#weekly .v12-week-toolbar{padding:13px;gap:10px}#weekly .v12-week-toolbar>label{width:100%}#weekly .v12-week-toolbar input{max-width:none}#weekly .v12-focus{padding:15px}#weekly .v12-focus-primary{align-items:flex-start;gap:12px}#weekly .v12-focus-title h3{font-size:21px}#weekly .v12-stamp-slot{min-width:105px}#weekly .v12-stamp-slot .v11-stamp,#weekly .v12-empty-stamp{width:105px;min-width:105px;padding:8px 5px}#weekly .v12-stamp-slot .v11-stamp strong,#weekly .v12-empty-stamp strong{font-size:15px}#weekly .v12-stamp-slot .v11-stamp small{font-size:9px}#weekly .v12-accountability{grid-template-columns:repeat(2,minmax(0,1fr))}#weekly .v12-accountability>div{padding:10px}#weekly .v12-accountability strong{font-size:12px}#weekly .v12-work-area{padding:0 12px 15px}#weekly .v12-task-tabs{flex-wrap:nowrap}#weekly .v12-task-tabs button{padding:12px 9px!important;font-size:12px!important}#weekly #v12PanelWrite .form{grid-template-columns:1fr}#weekly #v12PanelCompose .v9-compose-grid{grid-template-columns:1fr}}
+
+/* 상단 상태/문서 목록은 중복 없이 한 번만 표시 */
+body:has(#weekly:not(.hidden)) .app>main.main>.top{min-height:45px!important;padding:0 0 12px!important;margin-bottom:16px!important;justify-content:flex-end!important}
+body:has(#weekly:not(.hidden)) .app>main.main>.top>div:first-child{display:none!important}
+#weekly .v12-week-toolbar{justify-content:space-between}
+#weekly .v12-week-toolbar .v12-week-state.hidden{display:none!important}
+
+/* 중복 결재 단계와 두 번째 PDF 버튼은 상단 상태/행동으로 통합 */
+#weekly #v12PanelDocument .v10-doc>details.v10-disclosure:nth-of-type(2),#weekly #v12PanelDocument .v10-doc-footer{display:none!important}
+
+#weekly .v12-write-warning{padding:12px 15px;border:1px solid #f0d7a9;background:#fff7e9;color:#885a18;font-size:13px;font-weight:800;line-height:1.6;border-radius:9px;margin:0 0 14px}
