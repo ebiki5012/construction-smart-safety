@@ -1,0 +1,50 @@
+/* V11: 화면·출력 문서에서 결재 상태를 도장 형태로 즉시 확인한다. */
+#weekly .v11-scope-note{font-size:13px;font-weight:850;color:#3d5873;margin:5px 2px 8px}
+#weekly .v11-scope-note small{font-size:12px;color:#8193a6;margin-left:8px;font-weight:600}
+#weekly .v11-stamp{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;width:152px;min-width:152px;padding:12px 10px;border:3px double currentColor;border-radius:10px;transform:rotate(-3deg);background:rgba(255,255,255,.94);box-shadow:0 5px 18px #1b355512;text-align:center;color:#b17b2e;line-height:1.35}
+#weekly .v11-stamp>span{font-size:10px;letter-spacing:.09em;font-weight:850}
+#weekly .v11-stamp>strong{font-size:22px;font-weight:950;letter-spacing:-.065em}
+#weekly .v11-stamp>small{display:block;font-size:10px;line-height:1.4;font-weight:700;overflow-wrap:anywhere}
+#weekly .v11-stamp.approved{color:#117c59;background:#f0fff6}
+#weekly .v11-stamp.rejected{color:#b54957;background:#fff3f4}
+#weekly .v11-stamp.cancelled{color:#60748b;background:#f6f8fb}
+#weekly .v11-stamp.document{position:absolute;right:22px;top:19px}
+#weekly .v10-doc-header{position:relative;padding-right:202px;min-height:155px}
+#weekly .v11-decision-ribbon{display:flex;gap:20px;align-items:center;justify-content:space-between;padding:20px 24px!important}
+#weekly .v11-ribbon-message{flex:1;min-width:0}
+#weekly .v11-ribbon-message>b{display:block;color:#183857;font-size:17px;font-weight:900}
+#weekly .v11-ribbon-message>p{font-size:14px;color:#4d6680;line-height:1.55;margin:5px 0 0}
+#weekly .v11-decision-ribbon .v11-stamp{align-self:center}
+#weekly .v11-ribbon-action{display:flex;flex-wrap:wrap;align-items:center;gap:9px;margin-top:12px}
+#weekly .v11-ribbon-action button{min-height:45px!important;font-weight:900!important;font-size:14px!important;padding:11px 18px!important}
+#weekly .v11-ribbon-action .v11-approve{background:#157655!important;color:#fff!important;box-shadow:0 5px 14px #14765724}
+#weekly .v11-ribbon-action .v11-reject{background:#fff!important;color:#a54350!important;border:1px solid #e6b7c0!important}
+#weekly .v11-role-note{display:inline-block;margin-top:10px;padding:9px 12px;border-radius:9px;background:#fff;color:#8b6223;font-size:13px;font-weight:800}
+#weekly .v11-role-note.good{background:#e6f7ee;color:#146d4c}
+#weekly .v11-list-seal{display:inline-flex;margin-top:10px;align-self:flex-start;font-size:12px;font-weight:870;padding:6px 11px;border:1px solid #f0d6ab;background:#fff8eb;color:#96601c;border-radius:8px}
+#weekly .v11-list-seal.approved{background:#e9f8ef;color:#14714f;border-color:#bfe5d0}
+#weekly .v11-list-seal.rejected{background:#fff0f2;color:#ae4558;border-color:#f0c6ce}
+#weekly .v11-list-seal.cancelled{background:#f3f6f9;color:#64748b;border-color:#d9e1eb}
+#weekly .v11-week-verdict{display:flex;gap:20px;justify-content:space-between;align-items:center;padding:17px 19px;border-radius:14px;border:1px solid #dbe7f2;background:#f4f8fd;margin:16px 0}
+#weekly .v11-week-verdict.pending{background:#fff8ed;border-color:#eddbbd}
+#weekly .v11-week-verdict.approved{background:#effaf4;border-color:#c5e9d4}
+#weekly .v11-week-verdict.rejected{background:#fff1f3;border-color:#f0cdd3}
+#weekly .v11-week-verdict h4{font-size:20px;font-weight:920;margin:4px 0;color:#1d3d59}
+#weekly .v11-week-verdict p{margin:4px 0;color:#58718a;font-size:13px}
+#weekly .v11-week-verdict .v11-verdict-main{flex:1;min-width:0}
+#weekly .v11-verdict-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+#weekly .v11-verdict-actions button{font-size:13px!important;font-weight:870!important;min-height:42px;padding:9px 15px!important}
+#weekly .v11-verdict-actions .v11-finalize{background:#157655!important;color:#fff!important}
+#weekly .v11-verdict-actions .v11-document-link{background:#e1ecf7!important;color:#315778!important}
+#weekly .v11-verdict-actions .v11-return{background:#fff!important;color:#a33d4c!important;border:1px solid #e6b5bd!important}
+#weekly .v11-week-verdict .v11-stamp{box-shadow:0 4px 9px #14426c0e}
+#weekly .v11-week-verdict .v11-stamp strong{font-size:21px}
+#weekly .v11-week-stat-note{font-size:13px;color:#657c92;padding:11px 13px;border-radius:9px;background:#f3f7fb}
+#weekly .v11-company-caption{margin:12px 0;font-size:13px;font-weight:780;color:#536d86}
+#weekly .v11-company-row-included .v10-mini-pill{background:#e3f5ec;color:#146c4c}
+#weekly .v11-company-row-excluded .v10-mini-pill{background:#f4f6f9;color:#66758b}
+#weekly .v11-company-row-included .v10-mini-pill,#weekly .v11-company-row-excluded .v10-mini-pill{font-size:12px}
+#weekly .v11-lock-note{color:#17634f!important;background:#ecf9f1;border:1px solid #c3e8d6;padding:9px 12px;border-radius:8px}
+#weekly #v7SubmitWeekly:disabled,#weekly #v8ReadyWeekly:disabled{background:#e5e9ef!important;color:#718097!important;cursor:not-allowed;box-shadow:none!important}
+@media(max-width:850px){#weekly .v11-week-verdict{align-items:stretch;flex-direction:column}#weekly .v11-week-verdict>.v11-stamp{align-self:flex-end}}
+@media(max-width:650px){#weekly .v10-doc-header{padding-right:22px;min-height:0}#weekly .v11-stamp.document{position:static;margin-top:16px}#weekly .v11-stamp{width:140px;min-width:140px}#weekly .v11-decision-ribbon{align-items:flex-start;flex-direction:column}#weekly .v11-decision-ribbon .v11-stamp{align-self:flex-end}}
