@@ -13,7 +13,7 @@ assert(!html.includes('id="actionSub"'),'duplicate corrective action sidebar men
 for(const id of ['v12Focus','v12PanelDocument','v12PanelWrite','v12PanelLookup','v12PanelCompose','v12PanelTemplate','v10WeekPicker','v7WeeklyList','v7WeeklyDetails','v8WeeklyEvents','v7SubmitWeekly','v8ReadyWeekly','v11WeekVerdict','v10WeekStats','v10WeekCompanies']){
  assert(html.includes(`id="${id}"`),`required existing/new workflow control missing: ${id}`);
 }
-for(const mode of ['document','write','lookup','compose','template'])assert(main.includes(`data-v12-mode="${mode}"`),`missing task: ${mode}`);
+for(const mode of ['document','write','lookup','compose'])assert(main.includes(`data-v12-mode="${mode}"`),`missing task: ${mode}`);
 assert(html.includes('/workspace-v12.css?v=')&&html.includes('/workspace-v12.js?v='),'versioned V12 assets must load');
 assert(js.includes('window.v7RiskTab=function')&&js.includes('window.v7WeeklyTab=function'),'risk and weekly entry points must converge');
 assert(js.includes('window.v8TbmApprovalTab=')&&js.includes('window.v12TbmTab='),'TBM review must be reachable from one page');
@@ -23,5 +23,5 @@ assert(js.includes("record?.status==='PENDING'")&&js.includes('canApprove()'),'o
 assert(js.includes('renderDraft()')&&js.includes('renderFocus(record,items)'),'draft and submitted documents must be distinct');
 assert(css.includes('v12-main-layout')&&css.includes('v12-accountability')&&css.includes('@media(max-width:650px)'),'responsive master/detail missing');
 assert(css.includes('#v9ApprovalRibbon{display:none!important}'),'duplicate approval controls must be hidden');
-assert(server.includes("version:'12.0.0'")&&server.includes("ui:'single-workspace-v12'"),'server version endpoint not updated');
+assert(server.includes("version:'13.0.0'")&&server.includes("ui:'workflow-photos-v13'"),'server version endpoint not updated');
 console.log('PASS V12: one risk workspace, consolidated TBM/action navigation, canonical approval, writer/submitter/approver, mobile layout');

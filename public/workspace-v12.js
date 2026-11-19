@@ -1,4 +1,4 @@
-/* V12: 한 화면에서 주차 선택 → 작성자/위험요인 확인 → 상신/결재 → 이력 확인.
+/* V13: ① 작성 → ② 업체별 확인 → ③ 취합·상신 → ④ 최종 결재.
    기존 서버 API, 접근 권한, 결재 기록은 변경하지 않는다. */
 (() => {
   'use strict';
@@ -15,7 +15,7 @@
   const currentRows = () => typeof v7WeeklyRows !== 'undefined' && Array.isArray(v7WeeklyRows) ? v7WeeklyRows : [];
   const findWeekDoc = () => currentRows().find(row => date(row.week_start) === currentWeek());
   const canApprove = () => typeof v8IsManager === 'function' && v8IsManager();
-  const state = {mode:'document', selectedId:null, site:null, showingCurrent:true, initialized:false, listRendering:false};
+  const state = {mode:'write', autoMode:true, selectedId:null, site:null, showingCurrent:true, initialized:false, listRendering:false};
   const legacyWeeklyTab = window.v7WeeklyTab;
   const legacySaveRisk = window.saveRisk;
   const legacySubmit = window.submitV7Weekly;
@@ -49,7 +49,7 @@
     if (action) {
       const toolbar = document.createElement('div');
       toolbar.className='v12-sub-tabs';
-      toolbar.innerHTML = `<button type="button" data-v12-action="open" onclick="v8ActionTab('open')">미조치·진행 중</button><button type="button" data-v12-action="verify" onclick="v8ActionTab('verify')">완료 확인</button><button type="button" data-v12-action="register" onclick="v8ActionTab('register')">지적사항 등록</button>`;
+      toolbar.innerHTML = `<button type="button" data-v12-action="register" onclick="v8ActionTab('register')">① 지적사항 등록</button><button type="button" data-v12-action="open" onclick="v8ActionTab('open')">② 미조치·진행 중</button><button type="button" data-v12-action="verify" onclick="v8ActionTab('verify')">③ 완료 확인</button>`;
       action.prepend(toolbar);
     }
   }
@@ -118,7 +118,7 @@
     el('v7WeeklyDetailsCard')?.classList.add('hidden');
     const preview=typeof v7Preview!=='undefined'&&Array.isArray(v7Preview)?v7Preview:[];
     renderFocus(null,preview);
-    activeMode('document');
+    activeMode(state.autoMode?'write':state.mode);
   }
 
   function selectCurrentWeek() {
@@ -142,6 +142,7 @@
   }
 
   function showMode(mode) {
+    state.autoMode=false;
     moveLegacyViews();
     if (!el('weekly') || el('weekly').classList.contains('hidden')) return openWorkspace(mode);
     if (mode==='compose') {
@@ -173,7 +174,7 @@
     el('v12Focus')?.scrollIntoView({behavior:'instant',block:'nearest'});
   }
 
-  function openWorkspace(mode='document') {
+  function openWorkspace(mode='auto') {
     moveLegacyViews();
     if(typeof requireSite==='function'&&!requireSite())return;
     if(typeof sid!=='undefined'&&state.site!==String(sid)){
@@ -182,9 +183,14 @@
     }
     legacyWeeklyTab('approval');
     el('reviewStatusFilter').disabled=false;
-    if (mode==='document') {
+    if (mode==='auto') {
+      state.autoMode=true;
+      renderDraft();
+    } else if(mode==='document') {
+      state.autoMode=false;
       activeMode('document');
       renderDraft();
+      activeMode('document');
     } else showMode(mode);
   }
 
@@ -200,7 +206,7 @@
     const originalList=reviewUi.renderWeeklyList;
     reviewUi.renderWeeklyList=function(rows,mode){
       // 목록이 갱신돼도 사용자가 고른 주차를 임의로 다른 문서의 주차로 바꾸지 않는다.
-      const wantedWeek=currentWeek(), previousMode=state.mode, previousId=state.selectedId, wasCurrent=state.showingCurrent;
+      const wantedWeek=currentWeek(), previousMode=state.mode, previousId=state.selectedId, wasCurrent=state.showingCurrent, wasAuto=state.autoMode;
       state.listRendering=true;
       try{originalList.call(this,rows,'approval')}finally{state.listRendering=false}
       el('v10WeekPicker').value=wantedWeek;
@@ -213,7 +219,9 @@
         this.selectWeekly(previousId);
       }else if(matching)this.selectWeekly(Number(matching.id));
       else renderDraft();
-      if(previousMode!=='document')activeMode(previousMode);
+      state.autoMode=wasAuto;
+      if(wasAuto)activeMode(matching?'document':'write');
+      else activeMode(previousMode);
     };
     const originalSelect=reviewUi.selectWeekly;
     reviewUi.selectWeekly=function(id){
@@ -225,7 +233,8 @@
         el('v7WeekStart').value=date(record.week_start);
         el('v12DraftSummary')?.classList.add('hidden');
         el('v7WeeklyDetailsCard')?.classList.remove('hidden');
-        if(state.mode==='document')activeMode('document');
+        state.autoMode=false;
+        activeMode('document');
         renderFocus(record);
       }
       return originalSelect.call(this,id);
@@ -254,7 +263,7 @@
   window.v12ChangeWeek=changeWeek;
   window.v12Refresh=refresh;
   window.v7RiskTab=function(tab){openWorkspace(tab==='lookup'?'lookup':'write')};
-  window.v7WeeklyTab=function(tab){openWorkspace('document');if(tab==='completed'){el('reviewStatusFilter').value='APPROVED';reviewUi.filterWeekly(true)}};
+  window.v7WeeklyTab=function(tab){openWorkspace('auto');if(tab==='completed'){el('reviewStatusFilter').value='APPROVED';reviewUi.filterWeekly(true)}};
   window.v10OpenCompose=function(){showMode('compose')};
   window.v8ReloadRejected=function(week){openWorkspace('document');el('v10WeekPicker').value=date(week);el('v7WeekStart').value=date(week);showMode('compose');if(typeof toast==='function')toast('회의 내용과 위험요인을 확인한 뒤 재상신하세요.')};
   window.saveRisk=async function(...args){await legacySaveRisk(...args);if(el('weekly')&&!el('weekly').classList.contains('hidden')){legacyPreview?.();legacyWeekBoard?.()}};
@@ -278,6 +287,6 @@
   window.v8ActionTab=function(mode){legacyActionTab(mode);el('v12ActionNav')?.classList.add('on');document.querySelectorAll('[data-v12-action]').forEach(b=>b.classList.toggle('active',b.dataset.v12Action===mode))};
 
   moveLegacyViews();
-  const version=el('releaseVersion');if(version)version.textContent='SAFETY WORKSPACE · V12 / 통합 위험성평가 관리';
+  const version=el('releaseVersion');if(version)version.textContent='SAFETY WORKSPACE · V13 / 순서·사진 개선';
   window.v12Workspace={renderFocus,findWeekDoc,labels};
 })();

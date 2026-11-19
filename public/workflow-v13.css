@@ -1,0 +1,20 @@
+/* V13: 업무 순서와 조치 전·후 사진을 가장 먼저 이해할 수 있도록 */
+#weekly .v13-workflow{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;border-bottom:0;padding:14px 0 17px;margin-bottom:18px}
+#weekly .v13-workflow button{display:flex;align-items:center;justify-content:center;gap:8px;text-align:center;white-space:normal;min-height:57px;padding:10px 8px!important;border:1px solid #dbe5f1!important;border-radius:11px!important;background:#f5f8fc!important;color:#45607f!important;font-size:13px!important;line-height:1.35}
+#weekly .v13-workflow button.active{border-color:#77a5e5!important;background:#eaf3ff!important;color:#174b93!important;box-shadow:inset 0 -3px #2665b6}
+#weekly .v13-workflow .v13-step{display:inline-flex;align-items:center;justify-content:center;min-width:27px;height:27px;border-radius:9px;background:#e2ebf7;color:#315b90;font-size:12px;font-weight:900}
+#weekly .v13-workflow button.active .v13-step{background:#2862b4;color:#fff}
+#weekly .v13-panel-head{display:flex;align-items:center;justify-content:space-between;gap:14px}
+#weekly .v13-template-link{background:#eef3fa!important;color:#315d8b!important;font-size:13px!important;font-weight:800!important;border-radius:9px!important;white-space:nowrap}
+#action .v13-action-photo-field{grid-column:1/-1;border:1px dashed #a8c4e4;border-radius:11px;background:#f5f9ff;padding:14px 16px}
+#action .v13-action-photo-field label{display:block;font-weight:850;color:#244e7c;font-size:14px;margin-bottom:8px}
+#action .v13-action-photo-field input{background:#fff;max-width:100%;min-height:45px}
+#action .v13-action-photo-field small{display:block;margin-top:7px;color:#60758b;line-height:1.5}
+#action .v13-upload-result:not(:empty){margin-top:12px;padding:12px 14px;background:#eaf8f1;border:1px solid #b5e2cc;border-radius:9px;color:#176547;font-weight:750}
+#action .v13-upload-result.error{background:#fff5eb;border-color:#f4cc9b;color:#975b19}
+#action .v13-action-photo-help{padding:12px 14px;background:#f6f9fd;border-radius:9px}
+#action .v13-action-photo-help p{margin:5px 0 0}
+#action .v13-photo-button{background:#e9f2ff!important;color:#225995!important;font-weight:800!important}
+#photoStageLabel{display:block;margin:9px 0 5px;font-weight:850;color:#315c8b}
+@media(max-width:800px){#weekly .v13-workflow{grid-template-columns:repeat(2,minmax(0,1fr))}#weekly .v13-panel-head{align-items:flex-start;flex-direction:column}}
+@media(max-width:480px){#weekly .v13-workflow button{font-size:12px!important;min-height:55px}#weekly .v13-workflow .v13-step{min-width:23px;height:23px}}
