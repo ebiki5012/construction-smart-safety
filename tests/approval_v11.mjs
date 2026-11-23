@@ -7,7 +7,7 @@ const html=read('public/index.html'),js=read('public/approval-v11.js'),css=read(
 new vm.Script(js,{filename:'approval-v11.js'});
 new vm.Script(html.match(/<script>([\s\S]*?)<\/script>/)[1],{filename:'index-inline.js'});
 assert(html.includes('/approval-v11.js?v=')&&html.includes('/approval-v11.css?v='),'new approval assets missing');
-assert(html.includes('id="v11WeekVerdict"')&&html.includes('V15 · 사용자·사진·표준평가 개선'),'week approval summary and version missing');
+assert(html.includes('id="v11WeekVerdict"')&&html.includes('V16 · 3단계 결재·이력 관리'),'week approval summary and version missing');
 assert(js.includes('PENDING:')&&js.includes('APPROVED:')&&js.includes('REJECTED:')&&js.includes('CANCELLED:'),'all document statuses must have a label');
 assert(js.includes('approved_by_name')&&js.includes('approved_at'),'stamp must use recorded approver and date');
 assert(js.includes('record.status === \'PENDING\'')&&js.includes('decideV7Weekly'),'approval action only for a pending document');
@@ -17,7 +17,7 @@ assert(html.includes("$('v7SubmitWeekly').disabled=locked")&&html.includes("$('v
 assert(html.includes('이미 처리되었거나 현재 결재 대기 상태가 아닙니다'),'stale approval must trigger reload');
 assert(server.includes('const printSeal=')&&server.includes('approval-seal')&&server.includes('approved_at'),'print report needs status stamp');
 assert(css.includes('.v11-stamp.document')&&css.includes('@media(max-width:650px)'),'desktop and mobile stamp styles required');
-assert(server.includes("version:'15.0.0'"),'version endpoint must identify the deployed update');
+assert(server.includes("version:'16.0.0'"),'version endpoint must identify the deployed update');
 
 // Rendering a stamp must never elevate a pending document to approved or show a stale approval action.
 const ui={getSelectedWeekly(){return 9},showWeeklyDetails(){},filterWeekly(){},clearWeekly(){}};

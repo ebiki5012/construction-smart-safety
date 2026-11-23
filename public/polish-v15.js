@@ -1,6 +1,6 @@
 /* V15 · 사용자/사진/표준평가: 업무 출처가 먼저, 행동은 명확하게 */
 'use strict';
-const v15RoleNames={ADMIN:'최고관리자',MANAGER:'현장관리자',USER:'일반 사용자'};
+const v15RoleNames={ADMIN:'최고관리자',MANAGER:'현장관리자',USER:'일반 사용자',CONTRACTOR_MANAGER:'협력사 관리자',SAFETY_MANAGER:'원청 안전관리자',SITE_DIRECTOR:'원청 현장소장'};
 const v15Date=v=>String(v||'').slice(0,10)||'-';
 const v15TypeNames={risk:'위험성평가',tbm:'TBM',action:'지적·조치관리',custom:'사용자 양식'};
 
