@@ -39,7 +39,7 @@
     if (tbm && approvals) {
       const toolbar = document.createElement('div');
       toolbar.className = 'v12-sub-tabs';
-      toolbar.innerHTML = `<button type="button" data-v12-tbm="lookup" onclick="v12TbmTab('lookup')">TBM 기록·조회</button><button type="button" data-v12-tbm="write" onclick="v12TbmTab('write')">TBM 작성</button><button type="button" data-v12-tbm="approvals" onclick="v12TbmTab('approvals')">TBM 결재</button>`;
+      toolbar.innerHTML = `<button type="button" data-v12-tbm="lookup" onclick="v12TbmTab('lookup')">TBM 기록 확인</button><button type="button" data-v12-tbm="write" onclick="v12TbmTab('write')">＋ TBM 작성</button><button type="button" data-v12-tbm="approvals" onclick="v12TbmTab('approvals')">TBM 결재</button>`;
       tbm.prepend(toolbar);
       const panel = document.createElement('div'); panel.id='v12TbmApprovalsInline'; panel.className='hidden';
       while (approvals.firstChild) panel.appendChild(approvals.firstChild);
@@ -49,7 +49,7 @@
     if (action) {
       const toolbar = document.createElement('div');
       toolbar.className='v12-sub-tabs';
-      toolbar.innerHTML = `<button type="button" data-v12-action="register" onclick="v8ActionTab('register')">① 지적사항 등록</button><button type="button" data-v12-action="open" onclick="v8ActionTab('open')">② 미조치·진행 중</button><button type="button" data-v12-action="verify" onclick="v8ActionTab('verify')">③ 완료 확인</button>`;
+      toolbar.innerHTML = `<button type="button" data-v12-action="open" onclick="v8ActionTab('open')">미조치·진행 중</button><button type="button" data-v12-action="verify" onclick="v8ActionTab('verify')">조치 완료·확인</button><button type="button" data-v12-action="register" onclick="v8ActionTab('register')">＋ 새 지적 등록</button>`;
       action.prepend(toolbar);
     }
   }
@@ -75,7 +75,7 @@
     const host=el('v12Focus'); if (!host) return;
     const week=record?date(record.week_start):currentWeek();
     const isDoc=!!record;
-    const status=isDoc?(labels[record.status]||'상태 확인'):'상신 전';
+    const status=isDoc?(labels[record.status]||'상태 확인'):'작성 중 · 상신 전';
     const approved=record?.status==='APPROVED',pending=record?.status==='PENDING';
     const revision=isDoc?`${Number(record.revision)||1}차 통합 평가서`:'작성 중인 주차';
     const rows=Array.isArray(items)?items:[];
@@ -88,8 +88,8 @@
     const stamp=isDoc&&window.v11Approval ? v11Approval.stamp(record,'v12') : '<div class="v12-empty-stamp"><span>결재 상태</span><strong>상신 전</strong><small>원청 결재 기록 없음</small></div>';
     let primary=''; let secondary='';
     if (!isDoc) {
-      primary=canApprove()&&count>0?'<button class="v12-main-button" type="button" onclick="v12ShowMode(\'compose\')">평가서 취합·상신</button>':'<button class="v12-main-button" type="button" onclick="v12ShowMode(\'write\')">위험요인 작성</button>';
-      secondary='<button class="v12-text-button" type="button" onclick="v12ShowMode(\'lookup\')">업체별 작성 확인</button>';
+      primary=count>0?'<button class="v12-main-button" type="button" onclick="v12ShowMode(\'lookup\')">작성 기록 확인</button>':'<button class="v12-main-button" type="button" onclick="v12ShowMode(\'write\')">위험요인 작성</button>';
+      secondary=count>0&&canApprove()?'<button class="v12-text-button" type="button" onclick="v12ShowMode(\'compose\')">취합·상신으로 이동</button>':'<button class="v12-text-button" type="button" onclick="v12ShowMode(\'lookup\')">업체별 기록 확인</button>';
     } else if (pending && canApprove()) {
       primary=`<button class="v12-main-button success" type="button" onclick="decideV7Weekly(${Number(record.id)},'APPROVE')">이 평가서 최종 승인</button>`;
       secondary=`<button class="v12-text-button danger" type="button" onclick="decideV7Weekly(${Number(record.id)},'REJECT')">반려</button>`;
@@ -101,15 +101,15 @@
       primary='<span class="v12-done-label">✓ 최종 결재가 완료된 문서입니다</span>';
     }
     if (isDoc) secondary+=`<button class="v12-text-button" type="button" onclick="window.open('/api/v8/weekly/${Number(record.id)}/report','_blank')">인쇄·PDF</button>`;
-    const meta=approved?'승인자·승인시각은 서버의 최종 결재 기록 기준입니다.':pending?'상신 완료 상태입니다. 아직 최종 승인은 아닙니다.':record?.status==='CANCELLED'?'승인 취소 이력은 보존됩니다.':record?.status==='REJECTED'?'반려 후 수정하여 다시 상신할 수 있습니다.':'업체 작성 완료는 원청 최종 결재와 별도입니다.';
+    const meta=approved?'처리 완료 · 추가 결재가 필요하지 않습니다.':pending?'상신 완료 · 담당자의 최종 승인 또는 반려가 남았습니다.':record?.status==='CANCELLED'?'승인 취소 이력은 보존됩니다. 수정 후 재상신하세요.':record?.status==='REJECTED'?'반려 이력을 확인하고 수정 후 재상신하세요.':count>0?'작성된 위험요인을 확인한 뒤 취합·상신하세요.':'먼저 위험요인을 작성해 주세요. 업체 제출과 최종 결재는 별도 단계입니다.';
     host.innerHTML=`<div class="v12-focus-primary"><div class="v12-focus-title"><span class="v12-kicker">${safe(week)} 시작 주차 · ${safe(revision)}</span><h3>${safe(status)}</h3><p>${safe(meta)}</p></div><div class="v12-stamp-slot">${stamp}</div></div>
       <div class="v12-accountability"><div><span>위험요인</span><strong>${count}건</strong></div><div><span>작성자</span><strong title="${safe(authors.join(', ')||'-')}">${safe(authorsLabel)}</strong></div><div><span>상신자</span><strong>${safe(submitted)}</strong></div><div><span>최종 결재자</span><strong>${safe(approver)}</strong><small>${safe(when)}</small></div></div>
       <div class="v12-focus-actions">${primary}${secondary}</div>`;
     const badge=el('v12WeekStatus');if(badge)badge.textContent=status;
     const label=el('v12CurrentWeekLabel');if(label)label.textContent=week+' 시작';
-    const hint=el('v12CurrentWeekHint');if(hint)hint.textContent=isDoc?`${safe(status)} · ${Number(record.item_count)||0}건`:`위험요인 ${count}건 · 상신 전`;
+    const hint=el('v12CurrentWeekHint');if(hint)hint.textContent=isDoc?`${status} · ${Number(record.item_count)||0}건`:`위험요인 ${count}건 · 상신 전`;
     const current=el('v12CurrentWeek');if(current){current.classList.toggle('active',state.showingCurrent);current.classList.toggle('hidden',isDoc);}
-    const top=el('v12TopAction');if(top)top.innerHTML=isDoc?'<span class="v12-top-hint">아래 평가서에서 상세 확인</span>':'<button type="button" class="v12-top-cta" onclick="v12ShowMode(\'write\')">+ 위험요인 작성</button>';
+    const top=el('v12TopAction');if(top)top.innerHTML=''; // V14: 중복 버튼 제거, 문서 상태 카드의 다음 작업만 표시
   }
 
   function renderDraft() {
@@ -287,6 +287,6 @@
   window.v8ActionTab=function(mode){legacyActionTab(mode);el('v12ActionNav')?.classList.add('on');document.querySelectorAll('[data-v12-action]').forEach(b=>b.classList.toggle('active',b.dataset.v12Action===mode))};
 
   moveLegacyViews();
-  const version=el('releaseVersion');if(version)version.textContent='SAFETY WORKSPACE · V13 / 순서·사진 개선';
+  const version=el('releaseVersion');if(version)version.textContent='SAFETY WORKSPACE · V14 / 현장업무 통합 정리';
   window.v12Workspace={renderFocus,findWeekDoc,labels};
 })();

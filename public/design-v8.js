@@ -182,18 +182,17 @@
     const dash=document.getElementById('dashboard');
     if(dash&&!document.getElementById('v8DashboardWelcome')){
       const hero=document.createElement('div');hero.id='v8DashboardWelcome';hero.className='v8-dashboard-hero';
-      hero.innerHTML='<div><span class="v8-dashboard-eyebrow">SMART SAFETY · 현장 운영 현황</span><h2>오늘의 현장 안전업무</h2><p>위험성평가 작성과 주간 결재, TBM 확인, 지적사항 조치를 한곳에서 진행하세요.</p></div><div class="v8-dashboard-shortcuts"><button type="button" data-v8-shortcut="risk">위험성평가 조회 ↗</button><button type="button" data-v8-shortcut="weekly">주간 결재 확인 ↗</button><button type="button" data-v8-shortcut="tbm">TBM 조회 ↗</button></div>';
+      hero.innerHTML='<div><span class="v8-dashboard-eyebrow">SMART SAFETY · 현장 운영 현황</span><h2>오늘의 현장 안전업무</h2><p>위험성평가 작성과 주간 결재, TBM 확인, 지적사항 조치를 한곳에서 진행하세요.</p></div><div class="v8-dashboard-shortcuts"><button type="button" data-v8-shortcut="weekly">위험성평가 관리 ↗</button><button type="button" data-v8-shortcut="tbm">TBM 관리 ↗</button><button type="button" data-v8-shortcut="action">지적·조치관리 ↗</button></div>';
       dash.insertBefore(hero,dash.firstChild);
-      hero.querySelector('[data-v8-shortcut="risk"]').onclick=()=>v7RiskTab('lookup');
       hero.querySelector('[data-v8-shortcut="weekly"]').onclick=()=>v7WeeklyTab('approval');
       hero.querySelector('[data-v8-shortcut="tbm"]').onclick=()=>v7TbmTab('lookup');
+      hero.querySelector('[data-v8-shortcut="action"]').onclick=()=>v8ActionTab('open');
     }
     const side=document.querySelector('.app>.side');
     if(side&&!document.getElementById('v8MobileMenu')){
       const btn=document.createElement('button');btn.id='v8MobileMenu';btn.className='v8-mobile-menu';btn.type='button';btn.textContent='☰ 메뉴';btn.setAttribute('aria-expanded','false');btn.onclick=()=>{const open=side.classList.toggle('v8-nav-open');btn.textContent=open?'× 닫기':'☰ 메뉴';btn.setAttribute('aria-expanded',String(open))};side.appendChild(btn);
       side.querySelectorAll('.nav button[data-p]').forEach(item=>item.addEventListener('click',()=>{if(window.innerWidth<=900){side.classList.remove('v8-nav-open');btn.textContent='☰ 메뉴';btn.setAttribute('aria-expanded','false')}}));
     }
-    const badge=document.querySelector('.side .build-label');if(badge)badge.textContent='SAFETY WORKSPACE · V12 / 통합 위험성평가 관리';
     const description=document.querySelector('.top>.muted, .top>div>.muted');if(description)description.textContent='현장별 업무 · 작성부터 결재와 이력까지 한곳에서 관리';
   }
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',initUI);else initUI();

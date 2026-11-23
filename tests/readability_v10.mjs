@@ -6,7 +6,7 @@ const read=name=>fs.readFileSync(new URL('../'+name,import.meta.url),'utf8');
 const html=read('public/index.html'),js=read('public/readability-v10.js'),css=read('public/readability-v10.css');
 new vm.Script(js,{filename:'readability-v10.js'});
 assert(html.includes('/readability-v10.css?v=')&&html.includes('/readability-v10.js?v='),'V10 assets must be loaded');
-assert(html.includes('V13 · 업무 순서·조치 사진 개선'),'latest visible identifier missing');
+assert(html.includes('V14 · 현장업무 통합 정리'),'latest visible identifier missing');
 assert(js.includes('reviewUi.showWeeklyDetails=function'),'must enhance existing review without losing actions');
 assert(js.includes('v10-glance')&&js.includes('v10-document-risks'),'summary and hazard priority blocks missing');
 assert(js.indexOf('v10-document-risks')<js.indexOf('v10-disclosure'),'hazards must be above secondary details');

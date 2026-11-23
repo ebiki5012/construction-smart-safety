@@ -1,0 +1,122 @@
+/* V14 — 마지막 업무 정리: 중복 버튼 최소화, 상태/책임자/다음 행동 우선 */
+:root{--v14-text:#1a2d45;--v14-muted:#64788f;--v14-line:#dce5f0;--v14-bg:#f4f7fb;--v14-primary:#245cb4}
+body{color:var(--v14-text);font-size:15px;line-height:1.55}
+button{transition:background-color .15s,border-color .15s,box-shadow .15s}
+button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible,summary:focus-visible{outline:3px solid #8cb8f7!important;outline-offset:2px}
+button:disabled{opacity:.55;cursor:not-allowed}
+.app>.side{background:linear-gradient(180deg,#142b4a,#101d32);padding:22px 16px}
+.app>.side .brand{font-size:18px;line-height:1.4;letter-spacing:-.025em;margin-bottom:14px;overflow-wrap:anywhere}
+.app>.side .nav button{border-radius:10px;min-height:43px;padding:10px 12px;font-size:14px;line-height:1.35;margin:4px 0}
+.app>.side .nav button.on{background:#2b4e83!important;color:#fff!important;box-shadow:inset 3px 0 #8fbfff}
+.app>.side .build-label{font-size:11px;line-height:1.5;word-break:keep-all}
+.main{padding:24px;max-width:1540px}
+.card{border-color:#e1e8f1}
+.top .title{letter-spacing:-.04em}
+#dashboard .stat{font-size:29px}
+#dashboard .grid .card{padding:19px 20px}
+/* 위험성평가: 문서 상태 한 번, 다음 행동 한 번 */
+#weekly .v12-page-heading{margin-bottom:13px}
+#weekly .v12-page-heading p{font-size:13px}
+#weekly .v12-week-toolbar{padding:11px 17px;margin-bottom:12px}
+#weekly .v12-main-layout{gap:13px}
+#weekly .v12-document-sidebar{padding:16px}
+#weekly .v12-content-column{gap:12px}
+#weekly .v12-focus{padding:18px 21px}
+#weekly .v12-focus-title h3{font-size:25px;line-height:1.25;margin:5px 0 6px}
+#weekly .v12-focus-title p{font-size:14px;line-height:1.55;max-width:620px}
+#weekly .v12-accountability{margin-top:15px}
+#weekly .v12-accountability>div{min-width:0}
+#weekly .v12-accountability strong{overflow-wrap:anywhere}
+#weekly .v12-focus-actions{margin-top:14px;gap:9px;flex-wrap:wrap}
+#weekly .v12-main-button{font-weight:850;min-height:44px}
+#weekly .v12-text-button{min-height:42px}
+#weekly .v12-top-action:empty{display:none}
+#weekly .v12-task-tabs.v13-workflow{gap:8px;padding:10px 0 15px;margin-bottom:15px}
+#weekly .v13-workflow button{font-size:14px!important;min-height:54px!important;font-weight:850!important;padding:9px 7px!important}
+#weekly .v12-work-area{padding-bottom:22px}
+#weekly .v12-panel-heading p{font-size:14px;line-height:1.6}
+#weekly .v12-panel-heading h3{font-size:20px}
+#weekly .v10-risk-hazard,#weekly .v10-risk-measure{line-height:1.65}
+#weekly .v10-risk-card{border-color:#dfe8f2}
+#weekly .v12-draft-summary .v10-week-cards{margin-bottom:12px}
+#weekly .v12-document-sidebar .review-document-list{max-height:58vh}
+#weekly .v12-filter-label{margin-top:9px}
+/* TBM: 목록/상세는 넓게, 작성은 선택할 때만 */
+#tbm .v12-sub-tabs{padding:9px;margin-bottom:15px}
+#tbm .v12-sub-tabs button{min-height:41px}
+#tbm .v8-record-browser{min-width:0}
+#tbm .v8-record-detail{min-width:0}
+/* 지적·조치: 조치 상태와 담당 책임을 표 대신 짧은 카드로 */
+#action .v12-sub-tabs{padding:9px;margin-bottom:12px}
+#action .v12-sub-tabs button{min-height:42px}
+#action .v14-action-overview{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:11px;margin:0 0 13px}
+#action .v14-action-metric{border:1px solid var(--v14-line);border-radius:13px;background:#fff;padding:13px 16px;display:flex;flex-direction:column;gap:3px}
+#action .v14-action-metric span{font-size:12px;color:#657a92;font-weight:750}
+#action .v14-action-metric strong{font-size:22px;font-weight:900;color:#1c3858}
+#action #v8ActionForm{padding:22px;margin-bottom:13px}
+#action #v8ActionForm h3{font-size:21px;letter-spacing:-.04em;margin:0 0 4px}
+#action .v14-form-help{font-size:13px;color:var(--v14-muted);margin:0 0 18px}
+#action #v8ActionForm .form{gap:13px 16px}
+#action #v8ActionForm .form label{display:block;font-size:13px;font-weight:750;color:#435b77;margin-bottom:6px}
+#action #v8ActionForm .form input,#action #v8ActionForm .form select,#action #v8ActionForm .form textarea{min-height:43px;font-size:14px}
+#action #v8ActionForm>button{margin-top:13px;font-weight:800;min-height:43px}
+#action #v8ActionForm>button.v8-manager{background:#eef3fa;color:#345b8c}
+#action .v14-action-results{margin-top:10px}
+#action .v14-action-hint{color:#64778c;font-size:13px;margin:0 0 12px}
+#action #actionTable{background:transparent;border:0;border-radius:0;overflow:visible}
+#action .v14-action-list{display:grid;gap:11px}
+#action .v14-action-card{background:#fff;border:1px solid #dde6f1;border-radius:14px;padding:17px 19px;box-shadow:0 2px 8px rgba(22,48,82,.025)}
+#action .v14-action-card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px}
+#action .v14-action-card-head>div{min-width:0;flex:1}
+#action .v14-action-id{display:block;color:#68809c;font-size:12px;font-weight:800;line-height:1.4}
+#action .v14-action-card h4{font-size:17px;font-weight:900;color:#1c3551;line-height:1.45;margin:5px 0 0;white-space:pre-wrap;overflow-wrap:anywhere}
+#action .v14-action-state{font-size:12px;font-weight:850;border-radius:999px;padding:5px 11px;white-space:nowrap}
+#action .v14-action-state.open{background:#fff1dd;color:#91571c}
+#action .v14-action-state.waiting{background:#e8f1ff;color:#2259a5}
+#action .v14-action-state.verified{background:#e3f6eb;color:#196b46}
+#action .v14-action-meta{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 18px;margin:13px 0 14px;color:#445e7b;font-size:13px}
+#action .v14-action-meta span{min-width:0;overflow-wrap:anywhere}
+#action .v14-action-meta b{color:#7a8a9e;font-weight:750;margin-right:6px}
+#action .v14-action-card-footer{border-top:1px solid #edf1f6;padding-top:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+#action .v14-action-card-footer button{font-size:13px;min-height:39px;font-weight:800;padding:8px 12px}
+#action .v14-action-primary{background:#245cb4;color:#fff}
+#action .v14-photo-action{background:#eaf2ff;color:#285b9e}
+#action .v14-action-await{color:#627b99;font-size:13px;font-weight:800}
+#action .v14-action-admin{margin-left:auto;position:relative}
+#action .v14-action-admin summary{cursor:pointer;color:#526b88;font-size:13px;font-weight:800;padding:8px 11px;list-style:none;border-radius:8px;border:1px solid #e0e8f1;background:#f6f8fb}
+#action .v14-action-admin summary::-webkit-details-marker{display:none}
+#action .v14-action-admin[open] summary{background:#eaf2ff;color:#24569b}
+#action .v14-action-admin>div{display:flex;gap:7px;justify-content:flex-end;margin-top:8px}
+#action .v14-action-admin .dangerbtn{background:#a42e36}
+#action .v14-empty-action{padding:35px 16px;border:1px dashed #ccd9e8;border-radius:13px;text-align:center;background:#fff;color:#657d97;font-weight:750}
+/* 사진 모달: 전·후 구분이 화면에서 읽히도록 */
+#photoModal #photoStageLabel{font-size:14px;color:#244f82;margin-top:14px}
+#photoModal #photoStage{min-height:44px;margin-bottom:10px}
+#photoModal #photoGallery{line-height:1.55}
+/* 불필요한 동작을 감춘 대신 관리자 수정·정리 버튼은 펼쳐서 접근 가능 */
+@media(max-width:1000px){.main{padding:16px}#weekly .v12-main-layout{grid-template-columns:minmax(225px,260px) minmax(0,1fr)}}
+@media(max-width:900px){.main{padding:14px}#weekly .v12-main-layout{grid-template-columns:minmax(0,1fr)}#action .v14-action-overview{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:650px){
+ #weekly .v12-focus{padding:15px}#weekly .v12-focus-title h3{font-size:21px}
+ #weekly .v13-workflow button{font-size:12px!important;min-height:53px!important}
+ #action .v14-action-overview{gap:6px}
+ #action .v14-action-metric{padding:10px 9px}
+ #action .v14-action-metric span{font-size:11px}
+ #action .v14-action-metric strong{font-size:18px}
+ #action .v14-action-card{padding:14px}
+ #action .v14-action-card-head{flex-direction:column;gap:9px}
+ #action .v14-action-meta{grid-template-columns:1fr}
+ #action .v14-action-admin{margin-left:0}
+ #action .v14-action-card-footer{align-items:stretch}
+ #action .v14-action-card-footer>button{flex:1}
+}
+@media(prefers-reduced-motion:reduce){button{transition:none}}
+/* 모바일 메뉴는 기존 100% 폭 버튼 규칙을 상속하지 않도록 고정 */
+@media(max-width:900px){
+ .app>.side{min-height:78px;padding:13px 14px!important;overflow:visible!important}
+ .app>.side .brand{max-width:calc(100% - 116px);font-size:16px;line-height:1.35;margin:0 0 5px}
+ .app>.side>#who{max-width:calc(100% - 116px);font-size:11px}
+ .app>.side>.v8-mobile-menu{width:auto!important;min-width:90px!important;position:absolute!important;right:12px!important;top:12px!important;margin:0!important;padding:9px 12px!important;min-height:39px!important;text-align:center!important;z-index:2}
+ .app>.side.v8-nav-open .nav{display:flex;flex-direction:column;gap:2px;margin-top:12px}
+ .app>.side.v8-nav-open .nav button{width:100%}
+}

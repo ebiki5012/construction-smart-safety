@@ -23,5 +23,5 @@ assert(js.includes("record?.status==='PENDING'")&&js.includes('canApprove()'),'o
 assert(js.includes('renderDraft()')&&js.includes('renderFocus(record,items)'),'draft and submitted documents must be distinct');
 assert(css.includes('v12-main-layout')&&css.includes('v12-accountability')&&css.includes('@media(max-width:650px)'),'responsive master/detail missing');
 assert(css.includes('#v9ApprovalRibbon{display:none!important}'),'duplicate approval controls must be hidden');
-assert(server.includes("version:'13.0.0'")&&server.includes("ui:'workflow-photos-v13'"),'server version endpoint not updated');
+assert(server.includes("version:'14.0.0'")&&server.includes("ui:'final-workspace-v14'"),'server version endpoint not updated');
 console.log('PASS V12: one risk workspace, consolidated TBM/action navigation, canonical approval, writer/submitter/approver, mobile layout');
