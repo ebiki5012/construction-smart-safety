@@ -71,7 +71,7 @@
     document.querySelectorAll('[data-v8-risk-id]').forEach(btn => {const selected=String(btn.dataset.v8RiskId)===String(id);btn.classList.toggle('is-selected',selected);btn.setAttribute('aria-pressed',String(selected))});
     if (!r) {host.innerHTML=empty('상세 기록을 선택해 주세요','왼쪽 목록에서 평가를 선택하면 내용이 나타납니다.');return}
     host.innerHTML = `<div class="v8-detail-eyebrow">위험성평가 · No. ${Number(r.id)||'-'}</div><h3 class="v8-detail-title">${safe(r.work||'작업명 미기록')}</h3><div class="v8-detail-sub">${statusChip(r.level||'위험도 미기록',r.level==='높음'?'bad':'')}<span>${safe(r.area||'구역 미기록')}</span></div>
-      ${info([['협력업체',companyName(r)],['작성자',r.author_name||'-'],['작성일',day(r.risk_date)||'-'],['적용기간',`${day(r.period_start)||'-'} ~ ${day(r.period_end)||'-'}`],['위험도',`${Number(r.frequency)||'-'} (빈도) × ${Number(r.severity)||'-'} (강도) = ${Number(r.score)||'-'}점`],['작성방식',r.entry_mode==='PROXY'?'원청 대리 작성':r.entry_mode==='PRIME'?'원청 자체 작성':'협력업체 직접 작성']])}
+      ${info([['협력업체',companyName(r)],['작성자',r.author_name||'-'],['작성일',day(r.risk_date)||'-'],['적용기간',`${day(r.period_start)||'-'} ~ ${day(r.period_end)||'-'}`],['위험도',`${Number(r.frequency)||'-'} (빈도) × ${Number(r.severity)||'-'} (강도) = ${Number(r.score)||'-'}점`]])}
       ${section('주요 위험요인',r.hazard)}${section('위험 감소대책',r.measure)}${buttons('risk',r)}`;
   };
 
@@ -98,7 +98,7 @@
     if (!host) return;
     document.querySelectorAll('[data-v8-tbm-id]').forEach(btn => {const selected=String(btn.dataset.v8TbmId)===String(id);btn.classList.toggle('is-selected',selected);btn.setAttribute('aria-pressed',String(selected))});
     if (!r) {host.innerHTML=empty('TBM을 선택해 주세요','왼쪽 목록에서 기록을 클릭하면 상세정보가 나타납니다.');return}
-    host.innerHTML = `<div class="v8-detail-eyebrow">TBM 실시 기록 · No. ${Number(r.id)||'-'}</div><h3 class="v8-detail-title">${safe(r.work_name||'작업명 미기록')}</h3><div class="v8-detail-sub">${statusChip(statusName(r.approval_status),statusClass(r.approval_status))}<span>${safe(day(r.tbm_date))}</span></div>${info([['협력업체',companyName(r)],['실시일',day(r.tbm_date)||'-'],['작성자',r.author_name||'-'],['팀·업체',r.team||'-'],['참석 인원',`${Number(r.people)||0}명`],['작성방식',r.entry_mode==='PROXY'?'원청 대리 작성':r.entry_mode==='PRIME'?'원청 자체 작성':'협력업체 직접 작성']])}${section('작업 위험요인',r.hazard)}${section('안전 조치·감소대책',r.measure)}${buttons('tbm',r)}`;
+    host.innerHTML = `<div class="v8-detail-eyebrow">TBM 실시 기록 · No. ${Number(r.id)||'-'}</div><h3 class="v8-detail-title">${safe(r.work_name||'작업명 미기록')}</h3><div class="v8-detail-sub">${statusChip(statusName(r.approval_status),statusClass(r.approval_status))}<span>${safe(day(r.tbm_date))}</span></div>${info([['협력업체',companyName(r)],['실시일',day(r.tbm_date)||'-'],['작성자',r.author_name||'-'],['팀·업체',r.team||'-'],['참석 인원',`${Number(r.people)||0}명`]])}${section('작업 위험요인',r.hazard)}${section('안전 조치·감소대책',r.measure)}${buttons('tbm',r)}`;
   };
 
   // 기록 정리 입력창: 브라우저 prompt 대신 항상 보이는 문서형 모달

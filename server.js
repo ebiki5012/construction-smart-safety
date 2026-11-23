@@ -246,6 +246,10 @@ async function init(){
   WHERE wi.weekly_id=w.id), '[]'::jsonb) WHERE w.snapshot IS NULL`);
  await pool.query(`INSERT INTO weekly_risk_revisions(weekly_id,revision,snapshot,snapshot_hash,meeting_notes,attendees,meeting_date,submitted_by,submitted_at) SELECT w.id,w.revision,COALESCE(w.snapshot,'[]'::jsonb),COALESCE(w.snapshot_hash,'legacy-upgrade'),w.meeting_notes,w.attendees,w.meeting_date,w.submitted_by,COALESCE(w.submitted_at,now()) FROM weekly_risk_reviews w ON CONFLICT(weekly_id,revision) DO NOTHING`);
  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS session_version INTEGER NOT NULL DEFAULT 0");
+ // V15: 계정 보관은 기록 작성자·결재자 FK를 보존하는 논리 삭제 방식.
+ await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ;
+ ALTER TABLE users ADD COLUMN IF NOT EXISTS archived_by INT REFERENCES users(id);
+ ALTER TABLE users ADD COLUMN IF NOT EXISTS archive_reason TEXT;`);
  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT");
  await pool.query("CREATE UNIQUE INDEX IF NOT EXISTS users_username_lower_unique ON users (lower(username)) WHERE username IS NOT NULL");
  const admin=await one("SELECT id FROM users WHERE role='ADMIN' ORDER BY id LIMIT 1");
@@ -449,7 +453,7 @@ app.get('/api/v8/site-users',auth,async(req,res,next)=>{try{
 app.put('/api/v8/contractor-members/:userId',auth,async(req,res,next)=>{try{
  const sid=Number(req.body.site_id),uid=Number(req.params.userId),cid=Number(req.body.contractor_id)||null;
  if(!(await can(req,sid,['MANAGER'])))return res.status(403).json({error:'현장 관리자 권한 필요'});
- const target=await one('SELECT m.role,u.role global_role FROM memberships m JOIN users u ON u.id=m.user_id WHERE m.site_id=$1 AND m.user_id=$2',[sid,uid]);
+ const target=await one('SELECT m.role,u.role global_role FROM memberships m JOIN users u ON u.id=m.user_id AND u.active=true AND u.archived_at IS NULL WHERE m.site_id=$1 AND m.user_id=$2',[sid,uid]);
  if(!target||target.role!=='USER'||target.global_role==='ADMIN')return res.status(400).json({error:'현장 일반 사용자에게만 협력업체를 지정할 수 있습니다.'});
  if(cid&&!await one('SELECT id FROM contractors WHERE id=$1 AND site_id=$2 AND active=true',[cid,sid]))return res.status(400).json({error:'해당 현장의 협력업체가 아닙니다.'});
  if(cid)await pool.query(`INSERT INTO contractor_memberships(user_id,site_id,contractor_id,assigned_by) VALUES($1,$2,$3,$4)
@@ -855,7 +859,7 @@ app.patch("/api/sites/:id",auth,async(req,res)=>{
 
 app.get("/api/users",auth,async(req,res)=>{
  const u=await user(req);if(u.role!=="ADMIN")return res.status(403).json({error:"관리자만 볼 수 있습니다."});
- res.json(await q(`SELECT u.id,u.name,u.email,u.username,u.role,u.active,COALESCE(json_agg(json_build_object('site_id',m.site_id,'site_name',s.name,'site_role',m.role)) FILTER(WHERE m.site_id IS NOT NULL),'[]') sites
+ res.json(await q(`SELECT u.id,u.name,u.email,u.username,u.role,u.active,u.archived_at,u.archived_by,u.archive_reason,COALESCE(json_agg(json_build_object('site_id',m.site_id,'site_name',s.name,'site_role',m.role)) FILTER(WHERE m.site_id IS NOT NULL),'[]') sites
  FROM users u LEFT JOIN memberships m ON m.user_id=u.id LEFT JOIN sites s ON s.id=m.site_id GROUP BY u.id ORDER BY u.id DESC`));
 });
 const VALID_ROLES=new Set(["ADMIN","MANAGER","USER"]);
@@ -889,8 +893,9 @@ app.post("/api/users",auth,async(req,res)=>{
 });
 app.patch("/api/users/:id",auth,async(req,res)=>{
  if(!(await adminOnly(req,res)))return;
- const target=await one("SELECT id,role,active FROM users WHERE id=$1",[req.params.id]);
+ const target=await one("SELECT id,role,active,archived_at FROM users WHERE id=$1",[req.params.id]);
  if(!target)return res.status(404).json({error:"사용자를 찾을 수 없습니다."});
+ if(target.archived_at)return res.status(409).json({error:"보관된 계정입니다. 먼저 복구하세요."});
  const name=String(req.body.name||"").trim(),email=cleanEmail(req.body.email),username=cleanUsername(req.body.username),role=req.body.role;
  if(!name||name.length>100||!validEmail(email)||!validUsername(username)||!VALID_ROLES.has(role))return res.status(400).json({error:"입력 내용을 확인하세요."});
  if(target.role==="ADMIN"&&target.active&&role!=="ADMIN"&&(await adminCount())<=1)return res.status(400).json({error:"마지막 활성 최고관리자의 권한은 변경할 수 없습니다."});
@@ -903,16 +908,57 @@ app.patch("/api/users/:id",auth,async(req,res)=>{
 });
 app.patch("/api/users/:id/status",auth,async(req,res)=>{
  if(!(await adminOnly(req,res)))return;
- const target=await one("SELECT id,role,active FROM users WHERE id=$1",[req.params.id]);
+ const target=await one("SELECT id,role,active,archived_at FROM users WHERE id=$1",[req.params.id]);
  if(!target)return res.status(404).json({error:"사용자를 찾을 수 없습니다."});
+ if(target.archived_at)return res.status(409).json({error:"보관된 계정은 복구 후 활성화할 수 있습니다."});
  if(typeof req.body.active!=="boolean")return res.status(400).json({error:"상태 값이 올바르지 않습니다."});
  if(Number(target.id)===Number(req.session.userId)&&!req.body.active)return res.status(400).json({error:"자기 계정은 비활성화할 수 없습니다."});
  if(target.role==="ADMIN"&&target.active&&!req.body.active&&(await adminCount())<=1)return res.status(400).json({error:"마지막 활성 최고관리자를 비활성화할 수 없습니다."});
  res.json(await one("UPDATE users SET active=$1,session_version=session_version+1 WHERE id=$2 RETURNING id,active",[req.body.active,target.id]));
 });
+// V15: 삭제 대신 보관(soft delete). 작성·결재·사진 이력과 사용자 ID는 유지.
+app.delete("/api/users/:id",auth,async(req,res,next)=>{try{
+ if(!(await adminOnly(req,res)))return;
+ const reason=String(req.body?.reason||'').trim();
+ if(reason.length<5||reason.length>500)return res.status(400).json({error:'계정 보관 사유를 5~500자로 입력하세요.'});
+ const id=Number(req.params.id);
+ if(!Number.isSafeInteger(id)||id<1)return res.status(400).json({error:'계정 번호가 올바르지 않습니다.'});
+ if(id===Number(req.session.userId))return res.status(400).json({error:'본인 계정은 보관할 수 없습니다.'});
+ const client=await pool.connect();
+ try{
+  await client.query('BEGIN');
+  await client.query('SELECT pg_advisory_xact_lock(20261123,15)');
+  const target=(await client.query('SELECT id,name,role,active,archived_at FROM users WHERE id=$1 FOR UPDATE',[id])).rows[0];
+  if(!target){await client.query('ROLLBACK');return res.status(404).json({error:'사용자를 찾을 수 없습니다.'})}
+  if(target.archived_at){await client.query('ROLLBACK');return res.status(409).json({error:'이미 보관된 계정입니다.'})}
+  if(target.role==='ADMIN'&&target.active){
+   const n=Number((await client.query("SELECT count(*)::int n FROM users WHERE role='ADMIN' AND active=true AND archived_at IS NULL")).rows[0].n);
+   if(n<=1){await client.query('ROLLBACK');return res.status(409).json({error:'마지막 활성 최고관리자는 보관할 수 없습니다.'})}
+  }
+  const saved=(await client.query('UPDATE users SET active=false,archived_at=now(),archived_by=$1,archive_reason=$2,session_version=session_version+1 WHERE id=$3 RETURNING id,name,archived_at',[req.session.userId,reason,id])).rows[0];
+  await client.query("INSERT INTO admin_events(actor_id,category,action,object_id,details) VALUES($1,'users','ARCHIVE',$2,$3::jsonb)",[req.session.userId,String(id),JSON.stringify({name:target.name,reason})]);
+  await client.query('COMMIT');res.json({ok:true,user:saved});
+ }catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}
+}catch(e){next(e)}});
+app.post("/api/users/:id/restore",auth,async(req,res,next)=>{try{
+ if(!(await adminOnly(req,res)))return;
+ const id=Number(req.params.id);
+ if(!Number.isSafeInteger(id)||id<1)return res.status(400).json({error:'계정 번호가 올바르지 않습니다.'});
+ const client=await pool.connect();
+ try{
+  await client.query('BEGIN');
+  const target=(await client.query('SELECT id,name,archived_at FROM users WHERE id=$1 FOR UPDATE',[id])).rows[0];
+  if(!target||!target.archived_at){await client.query('ROLLBACK');return res.status(404).json({error:'보관된 계정을 찾을 수 없습니다.'})}
+  // 복구 후에는 보안상 비활성 상태. 관리자가 별도로 활성화해야 로그인 가능.
+  const saved=(await client.query('UPDATE users SET archived_at=NULL,archived_by=NULL,archive_reason=NULL,active=false,session_version=session_version+1 WHERE id=$1 RETURNING id,name,active',[id])).rows[0];
+  await client.query("INSERT INTO admin_events(actor_id,category,action,object_id,details) VALUES($1,'users','RESTORE',$2,$3::jsonb)",[req.session.userId,String(id),JSON.stringify({name:target.name})]);
+  await client.query('COMMIT');res.json({ok:true,user:saved});
+ }catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}
+}catch(e){next(e)}});
 app.post("/api/users/:id/reset-password",auth,async(req,res)=>{
  if(!(await adminOnly(req,res)))return;
  if(!validPassword(req.body.password))return res.status(400).json({error:"새 비밀번호는 10자 이상이어야 합니다."});
+ if(!await one('SELECT id FROM users WHERE id=$1 AND archived_at IS NULL',[req.params.id]))return res.status(404).json({error:'활성 관리 대상 계정을 찾을 수 없습니다.'});
  const ph=await bcrypt.hash(req.body.password,12);
  const target=await one("UPDATE users SET password_hash=$1,session_version=session_version+1 WHERE id=$2 RETURNING id",[ph,req.params.id]);
  if(!target)return res.status(404).json({error:"사용자를 찾을 수 없습니다."});
@@ -932,7 +978,7 @@ app.post("/api/users/:id/sites",auth,async(req,res)=>{
  if(!(await adminOnly(req,res)))return;
  const role=req.body.role||"USER";
  if(!VALID_ROLES.has(role))return res.status(400).json({error:"현장 권한이 올바르지 않습니다."});
- const u=await one("SELECT id FROM users WHERE id=$1",[req.params.id]),site=await one("SELECT id FROM sites WHERE id=$1",[req.body.site_id]);
+ const u=await one("SELECT id FROM users WHERE id=$1 AND archived_at IS NULL",[req.params.id]),site=await one("SELECT id FROM sites WHERE id=$1",[req.body.site_id]);
  if(!u||!site)return res.status(404).json({error:"사용자 또는 현장을 찾을 수 없습니다."});
  await pool.query("INSERT INTO memberships(user_id,site_id,role) VALUES($1,$2,$3) ON CONFLICT(user_id,site_id) DO UPDATE SET role=EXCLUDED.role",[u.id,site.id,role]);
  if(role!=='USER')await pool.query('DELETE FROM contractor_memberships WHERE user_id=$1 AND site_id=$2',[u.id,site.id]);
@@ -1412,6 +1458,6 @@ app.get('/api/v5/report',auth,async(req,res,next)=>{try{
 }catch(e){next(e)}});
 
 // 배포 파일 확인용 읽기 전용 엔드포인트. 로그인·DB·R2 설정을 공개하지 않는다.
-app.get('/api/version',(req,res)=>res.set('Cache-Control','no-store').json({version:'14.0.0',release:'2026-11-23',ui:'final-workspace-v14'}));
+app.get('/api/version',(req,res)=>res.set('Cache-Control','no-store').json({version:'15.0.0',release:'2026-11-23',ui:'polish-workspace-v15'}));
 app.use((req,res)=>{if(req.method==="GET")res.sendFile(path.join(__dirname,"public","index.html"));else res.status(404).json({error:"요청을 찾을 수 없습니다."})});
 init().then(()=>app.listen(PORT,"0.0.0.0",()=>console.log(`Safety app running on ${PORT}`))).catch(e=>{console.error(e);process.exit(1)});

@@ -287,6 +287,6 @@
   window.v8ActionTab=function(mode){legacyActionTab(mode);el('v12ActionNav')?.classList.add('on');document.querySelectorAll('[data-v12-action]').forEach(b=>b.classList.toggle('active',b.dataset.v12Action===mode))};
 
   moveLegacyViews();
-  const version=el('releaseVersion');if(version)version.textContent='SAFETY WORKSPACE · V14 / 현장업무 통합 정리';
+  const version=el('releaseVersion');if(version)version.textContent='SAFETY WORKSPACE · V15 / 사용자·사진·표준평가 개선';
   window.v12Workspace={renderFocus,findWeekDoc,labels};
 })();
