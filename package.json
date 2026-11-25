@@ -1,12 +1,12 @@
 {
   "name": "construction-smart-safety-shared",
-  "version": "16.0.0",
+  "version": "18.0.0",
   "private": true,
   "description": "현장별 공유형 건설 안전관리 웹앱",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node tests/static.mjs && node tests/menu_layout.mjs && node tests/weekly_flow.mjs && node tests/unified_approval.mjs && node tests/admin_cleanup.mjs && node tests/ui_v8.mjs && node tests/weekly_v9.mjs && node tests/readability_v10.mjs && node tests/approval_v11.mjs && node tests/workspace_v12.mjs && node tests/workflow_v13.mjs && node tests/final_v14.mjs && node tests/polish_v15.mjs && node tests/approval_v16.mjs && node tests/contractor_v16.mjs"
+    "test": "node tests/static.mjs && node tests/menu_layout.mjs && node tests/weekly_flow.mjs && node tests/unified_approval.mjs && node tests/admin_cleanup.mjs && node tests/ui_v8.mjs && node tests/weekly_v9.mjs && node tests/readability_v10.mjs && node tests/approval_v11.mjs && node tests/workspace_v12.mjs && node tests/workflow_v13.mjs && node tests/final_v14.mjs && node tests/polish_v15.mjs && node tests/approval_v16.mjs && node tests/contractor_v16.mjs && node tests/site_admin_v17.mjs && node tests/site_route_v18.mjs"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

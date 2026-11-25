@@ -266,6 +266,10 @@ async function init(){
    updated_by INT REFERENCES users(id),updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
    CONSTRAINT different_weekly_approvers CHECK(safety_user_id IS NULL OR director_user_id IS NULL OR safety_user_id<>director_user_id)
  );
+ ALTER TABLE weekly_approval_settings ADD COLUMN IF NOT EXISTS allow_self_review BOOLEAN NOT NULL DEFAULT true;
+ ALTER TABLE weekly_risk_revisions ADD COLUMN IF NOT EXISTS allow_self_review BOOLEAN NOT NULL DEFAULT true;
+ ALTER TABLE weekly_approval_settings ADD COLUMN IF NOT EXISTS review_role TEXT NOT NULL DEFAULT 'SAFETY_MANAGER' CHECK(review_role IN ('SAFETY_MANAGER','MANAGER','NONE'));
+ ALTER TABLE weekly_risk_revisions ADD COLUMN IF NOT EXISTS review_role TEXT NOT NULL DEFAULT 'SAFETY_MANAGER' CHECK(review_role IN ('SAFETY_MANAGER','MANAGER','NONE'));
  CREATE TABLE IF NOT EXISTS weekly_contractor_approval_events(
    id BIGSERIAL PRIMARY KEY,site_id INT NOT NULL REFERENCES sites(id),week_start DATE NOT NULL,
    contractor_id INT NOT NULL REFERENCES contractors(id),action TEXT NOT NULL,
@@ -340,7 +344,7 @@ async function recordCompanyAllowed(req,type,id,siteId){
 }
 function isoDate(value){return typeof value==='string'?value.slice(0,10):value instanceof Date?value.toISOString().slice(0,10):''}
 function validMonday(date){return /^\d{4}-\d{2}-\d{2}$/.test(date)&&!Number.isNaN(Date.parse(date))&&new Date(date+'T00:00:00Z').getUTCDay()===1}
-const weeklyRowsSql=`SELECT r.id,r.area,r.work,r.hazard,r.measure,r.frequency,r.severity,r.score,r.level,
+const weeklyRowsSql=`SELECT r.id,r.author_id,r.area,r.work,r.hazard,r.measure,r.frequency,r.severity,r.score,r.level,
  r.risk_date,r.period_start,r.period_end,r.contractor_id,r.entry_mode,
  u.name author_name,c.name contractor_name FROM risks r
  LEFT JOIN users u ON u.id=r.author_id LEFT JOIN contractors c ON c.id=r.contractor_id
@@ -478,8 +482,9 @@ async function approverConfig(siteId,client=pool){
  LEFT JOIN users du ON du.id=cfg.director_user_id WHERE cfg.site_id=$1`,[siteId]);
  return result.rows[0]||null;
 }
-async function validStageUser(client,siteId,userId,stage){
- const role=stage==='SAFETY'?'SAFETY_MANAGER':'SITE_DIRECTOR';
+async function validStageUser(client,siteId,userId,stage,reviewRole='SAFETY_MANAGER'){
+ const role=stage==='SAFETY'?reviewRole:'SITE_DIRECTOR';
+ if(!['SAFETY_MANAGER','MANAGER','SITE_DIRECTOR'].includes(role)||stage==='SAFETY'&&role==='SITE_DIRECTOR')return false;
  const r=await client.query(`SELECT u.id FROM users u JOIN memberships m ON m.user_id=u.id
  WHERE u.id=$1 AND m.site_id=$2 AND m.role=$3 AND u.role<>'ADMIN' AND u.active=true AND u.archived_at IS NULL`,[userId,siteId,role]);
  return !!r.rows.length;
@@ -573,29 +578,29 @@ app.get('/api/v16/approvers',auth,async(req,res,next)=>{try{
  const sid=Number(req.query.site_id);if(!(await can(req,sid)))return res.status(403).json({error:'현장 권한이 없습니다.'});
  const config=await approverConfig(sid);
  const candidates=await q(`SELECT u.id,u.name,m.role FROM memberships m JOIN users u ON u.id=m.user_id
- WHERE m.site_id=$1 AND m.role IN ('SAFETY_MANAGER','SITE_DIRECTOR') AND u.role<>'ADMIN' AND u.active=true AND u.archived_at IS NULL
+ WHERE m.site_id=$1 AND m.role IN ('SAFETY_MANAGER','SITE_DIRECTOR','MANAGER') AND u.role<>'ADMIN' AND u.active=true AND u.archived_at IS NULL
  ORDER BY m.role,u.name`,[sid]);
  const actorRole=await siteRole(req,sid);
  res.json({site_id:sid,safety_user_id:config?.safety_user_id||null,director_user_id:config?.director_user_id||null,
   safety_name:config?.safety_name||null,director_name:config?.director_name||null,
-  can_configure:['ADMIN','MANAGER'].includes(actorRole),candidates});
+  review_role:config?.review_role||'SAFETY_MANAGER',allow_self_review:config?.allow_self_review!==false,can_configure:['ADMIN','MANAGER'].includes(actorRole),candidates});
 }catch(e){next(e)}});
 app.put('/api/v16/approvers',auth,async(req,res,next)=>{try{
- const sid=Number(req.body.site_id),safety=Number(req.body.safety_user_id),director=Number(req.body.director_user_id);
+ const sid=Number(req.body.site_id),reviewRole=req.body.review_role??'SAFETY_MANAGER',safety=reviewRole==='NONE'?null:Number(req.body.safety_user_id),director=Number(req.body.director_user_id),allowSelf=req.body.allow_self_review!==false;
  if(!(await can(req,sid,['MANAGER'])))return res.status(403).json({error:'결재선 설정은 최고관리자 또는 현장관리자만 가능합니다.'});
- if(!Number.isSafeInteger(safety)||!Number.isSafeInteger(director)||safety===director||
-    !(await validStageUser(pool,sid,safety,'SAFETY'))||!(await validStageUser(pool,sid,director,'DIRECTOR')))
-  return res.status(400).json({error:'현장에 배정된 서로 다른 안전관리자와 현장소장을 선택하세요.'});
+ if(!['SAFETY_MANAGER','MANAGER','NONE'].includes(reviewRole)||!Number.isSafeInteger(director)||director<1||reviewRole!=='NONE'&&(!Number.isSafeInteger(safety)||safety<1||safety===director))
+  return res.status(400).json({error:'결재 유형과 현장소장, 필요한 중간 검토자를 지정하세요.'});
  const client=await pool.connect();try{
   await client.query('BEGIN');
   await client.query('SELECT pg_advisory_xact_lock($1,0)',[sid]);
+  if(!(await validStageUser(client,sid,director,'DIRECTOR'))||reviewRole!=='NONE'&&!(await validStageUser(client,sid,safety,'SAFETY',reviewRole))){await client.query('ROLLBACK');return res.status(400).json({error:'해당 현장의 활성 결재자만 지정할 수 있습니다.'})}
   // Active cases cannot be silently rerouted.
   const pending=(await client.query("SELECT id FROM weekly_risk_reviews WHERE site_id=$1 AND status='PENDING' AND approval_stage IN ('SAFETY','DIRECTOR') LIMIT 1",[sid])).rows;
   if(pending.length){await client.query('ROLLBACK');return res.status(409).json({error:'결재 진행 중인 문서가 있습니다. 완료 또는 반려 처리 후 결재자를 변경하세요.'})}
-  const result=(await client.query(`INSERT INTO weekly_approval_settings(site_id,safety_user_id,director_user_id,updated_by)
-   VALUES($1,$2,$3,$4) ON CONFLICT(site_id) DO UPDATE SET safety_user_id=EXCLUDED.safety_user_id,
-   director_user_id=EXCLUDED.director_user_id,updated_by=EXCLUDED.updated_by,updated_at=now() RETURNING *`,[sid,safety,director,req.session.userId])).rows[0];
-  await client.query("INSERT INTO admin_events(actor_id,category,action,object_id,details) VALUES($1,'weekly_approvers','UPDATE',$2,$3::jsonb)",[req.session.userId,String(sid),JSON.stringify({safety_user_id:safety,director_user_id:director})]);
+  const result=(await client.query(`INSERT INTO weekly_approval_settings(site_id,safety_user_id,director_user_id,updated_by,allow_self_review,review_role)
+   VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(site_id) DO UPDATE SET safety_user_id=EXCLUDED.safety_user_id,
+   director_user_id=EXCLUDED.director_user_id,allow_self_review=EXCLUDED.allow_self_review,review_role=EXCLUDED.review_role,updated_by=EXCLUDED.updated_by,updated_at=now() RETURNING *`,[sid,safety,director,req.session.userId,allowSelf,reviewRole])).rows[0];
+  await client.query("INSERT INTO admin_events(actor_id,category,action,object_id,details) VALUES($1,'weekly_approvers','UPDATE',$2,$3::jsonb)",[req.session.userId,String(sid),JSON.stringify({safety_user_id:safety,director_user_id:director,allow_self_review:allowSelf,review_role:reviewRole})]);
   await client.query('COMMIT');res.json(result);
  }catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}
 }catch(e){next(e)}});
@@ -663,19 +668,18 @@ app.get('/api/v16/weekly/:id/stages',auth,async(req,res,next)=>{try{
  if(!w||!(await can(req,w.site_id)))return res.status(404).json({error:'평가서가 없습니다.'});
  const scope=await companyScope(req,w.site_id);
  if(scope.restricted&&!(Array.isArray(w.snapshot)&&w.snapshot.some(r=>Number(r.contractor_id)===scope.contractor_id)))return res.status(404).json({error:'해당 업체 평가서가 없습니다.'});
- const [settings,stages,companies,revision]=await Promise.all([
-  approverConfig(w.site_id),
-  q(`SELECT e.revision,e.stage,e.action,e.comment,e.created_at,COALESCE(NULLIF(e.actor_name,''),u.name) actor_name
-   FROM weekly_stage_approval_events e LEFT JOIN users u ON u.id=e.actor_id WHERE e.weekly_id=$1 ORDER BY e.id`,[w.id]),
+ const [stages,companies,revision]=await Promise.all([
+  q(`SELECT e.revision,e.stage,e.action,e.comment,e.created_at,rv.review_role,COALESCE(NULLIF(e.actor_name,''),u.name) actor_name
+   FROM weekly_stage_approval_events e LEFT JOIN users u ON u.id=e.actor_id LEFT JOIN weekly_risk_revisions rv ON rv.weekly_id=e.weekly_id AND rv.revision=e.revision WHERE e.weekly_id=$1 ORDER BY e.id`,[w.id]),
   q(`SELECT e.contractor_id,c.name contractor_name,e.action,e.comment,e.created_at,COALESCE(NULLIF(e.actor_name,''),u.name) actor_name
    FROM weekly_contractor_approval_events e JOIN contractors c ON c.id=e.contractor_id LEFT JOIN users u ON u.id=e.actor_id
    WHERE e.site_id=$1 AND e.week_start=$2 AND ($3::int IS NULL OR e.contractor_id=$3) ORDER BY e.id`,[w.site_id,w.week_start,scope.restricted?scope.contractor_id||-1:null]),
-  one(`SELECT wr.contractor_approvals,su.name safety_name,du.name director_name
+  one(`SELECT wr.contractor_approvals,wr.review_role,su.name safety_name,du.name director_name
    FROM weekly_risk_revisions wr LEFT JOIN users su ON su.id=wr.safety_user_id
    LEFT JOIN users du ON du.id=wr.director_user_id WHERE wr.weekly_id=$1 AND wr.revision=$2`,[w.id,w.revision])
  ]);
  res.json({approval_stage:w.approval_stage,revision:w.revision,status:w.status,
-  safety_name:revision?.safety_name||settings?.safety_name||null,director_name:revision?.director_name||settings?.director_name||null,
+  review_role:revision?.review_role||'SAFETY_MANAGER',safety_name:revision?.safety_name||null,director_name:revision?.director_name||null,
   contractor_approvals:(revision?.contractor_approvals||[]).filter(c=>!scope.restricted||Number(c.contractor_id)===scope.contractor_id),
   safety_approved_at:w.safety_approved_at,safety_approved_by:w.safety_approved_by,
   stages,companies});
@@ -686,16 +690,15 @@ app.get('/api/v7/weekly',auth,async(req,res,next)=>{try{
  const rows=await q(`SELECT w.id,w.site_id,w.week_start,w.meeting_notes,w.attendees,w.meeting_date,w.status,w.revision,w.submitted_at,w.approved_at,w.decision_comment,w.snapshot_hash,
  w.cancelled_at,w.cancel_reason,w.archived_at,w.approval_stage,w.safety_approved_at,w.safety_comment,
  u.name submitted_by_name,a.name approved_by_name,c.name cancelled_by_name,sa.name safety_approved_by_name,
- COALESCE(wr.safety_user_id,cfg.safety_user_id) safety_user_id,COALESCE(wr.director_user_id,cfg.director_user_id) director_user_id,
+ wr.review_role,wr.safety_user_id,wr.director_user_id,
  su.name safety_assignee_name,du.name director_assignee_name,
  jsonb_array_length(COALESCE(w.snapshot,'[]'::jsonb)) item_count
  FROM weekly_risk_reviews w LEFT JOIN users u ON u.id=w.submitted_by LEFT JOIN users a ON a.id=w.approved_by
  LEFT JOIN users c ON c.id=w.cancelled_by
  LEFT JOIN users sa ON sa.id=w.safety_approved_by
- LEFT JOIN weekly_approval_settings cfg ON cfg.site_id=w.site_id
  LEFT JOIN weekly_risk_revisions wr ON wr.weekly_id=w.id AND wr.revision=w.revision
- LEFT JOIN users su ON su.id=COALESCE(wr.safety_user_id,cfg.safety_user_id)
- LEFT JOIN users du ON du.id=COALESCE(wr.director_user_id,cfg.director_user_id)
+ LEFT JOIN users su ON su.id=wr.safety_user_id
+ LEFT JOIN users du ON du.id=wr.director_user_id
  WHERE w.site_id=$1 AND w.status<>'ARCHIVED' AND ($2::int IS NULL OR EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(w.snapshot,'[]'::jsonb)) v WHERE v->>'contractor_id'=$2::text)) ORDER BY w.week_start DESC LIMIT 200`,[sid,scope.restricted?scope.contractor_id||-1:null]);
  res.json(rows);
 }catch(e){next(e)}});
@@ -709,9 +712,10 @@ app.get('/api/v7/weekly/preview',auth,async(req,res,next)=>{try{
 app.post('/api/v7/weekly',auth,async(req,res,next)=>{try{
  const sid=Number(req.body.site_id),start=String(req.body.week_start||''),meeting=String(req.body.meeting_notes||'').slice(0,4000),attendees=String(req.body.attendees||'').slice(0,2000);
  const meetingDate=String(req.body.meeting_date||'').slice(0,10)||null;
- if(!(await can(req,sid,['MANAGER'])))return res.status(403).json({error:'원청 통합 상신 권한이 필요합니다.'});
+ if(!(await can(req,sid,['MANAGER','SAFETY_MANAGER'])))return res.status(403).json({error:'원청 현장관리자 또는 안전관리자의 통합 상신 권한이 필요합니다.'});
  if(!validMonday(start)||meetingDate&&!/^\d{4}-\d{2}-\d{2}$/.test(meetingDate))return res.status(400).json({error:'주차 또는 회의일 형식을 확인하세요.'});
  const client=await pool.connect();try{await client.query('BEGIN');
+ await client.query('SELECT pg_advisory_xact_lock($1,0)',[sid]);
  const old=(await client.query('SELECT * FROM weekly_risk_reviews WHERE site_id=$1 AND week_start=$2 FOR UPDATE',[sid,start])).rows[0];
  if(old&&!['REJECTED','CANCELLED','ARCHIVED'].includes(old.status)){await client.query('ROLLBACK');return res.status(409).json({error:'이미 상신 또는 승인된 주차입니다. 반려·취소·정리된 평가서만 새 차수로 상신할 수 있습니다.'})}
  const items=(await client.query(weeklyRowsSql,[sid,start])).rows;
@@ -721,11 +725,13 @@ app.post('/api/v7/weekly',auth,async(req,res,next)=>{try{
   return res.status(409).json({error:'업체 정보가 확인되지 않은 위험요인이 포함되어 있습니다. [협력업체·작성자 관리 → 과거 기록의 업체 정보 정리]에서 업체 또는 원청 자체 작성을 지정한 뒤 상신해 주세요.'});
  }
  const config=await approverConfig(sid,client);
- if(!config?.safety_user_id||!config?.director_user_id||config.safety_user_id===config.director_user_id||
-    !(await validStageUser(client,sid,config.safety_user_id,'SAFETY'))||
+ const reviewRole=config?.review_role||'SAFETY_MANAGER';
+ if(!config?.director_user_id||!['SAFETY_MANAGER','MANAGER','NONE'].includes(reviewRole)||
+    reviewRole!=='NONE'&&(!config.safety_user_id||config.safety_user_id===config.director_user_id||!(await validStageUser(client,sid,config.safety_user_id,'SAFETY',reviewRole)))||
     !(await validStageUser(client,sid,config.director_user_id,'DIRECTOR'))){
-  await client.query('ROLLBACK');return res.status(409).json({error:'먼저 [결재선 설정]에서 원청 안전관리자와 현장소장을 서로 다른 활성 사용자로 지정하세요.'});
+  await client.query('ROLLBACK');return res.status(409).json({error:'먼저 현장관리자가 [현장별 결재선]에서 유효한 결재 유형과 담당자를 지정해야 합니다.'});
  }
+ if(reviewRole!=='NONE'&&config.allow_self_review===false&&(Number(config.safety_user_id)===Number(req.session.userId)||items.some(r=>Number(r.author_id)===Number(config.safety_user_id)))){await client.query('ROLLBACK');return res.status(409).json({error:'자기 검토 금지 설정: 지정 중간 검토자가 작성 또는 상신한 문서는 다른 검토자를 지정한 뒤 상신하세요.'})}
  const companies=(await client.query(`SELECT DISTINCT r.contractor_id,c.name,ws.status,ws.risk_hash
  FROM risks r JOIN contractors c ON c.id=r.contractor_id
  LEFT JOIN weekly_contractor_submissions ws ON ws.site_id=r.site_id AND ws.week_start=$2::date AND ws.contractor_id=r.contractor_id
@@ -739,16 +745,17 @@ app.post('/api/v7/weekly',auth,async(req,res,next)=>{try{
  if(missing.length){await client.query('ROLLBACK');return res.status(409).json({error:'협력사 1차 승인이 완료되어야 통합 상신할 수 있습니다: '+missing.join(', '),unapproved_companies:missing})}
  const snapshot=JSON.stringify(items.map(r=>({...r,risk_date:isoDate(r.risk_date),period_start:isoDate(r.period_start),period_end:isoDate(r.period_end)})));
  const hash=crypto.createHash('sha256').update(snapshot).digest('hex');
+ const initialStage=reviewRole==='NONE'?'DIRECTOR':'SAFETY';
  let w,revision=1;
  if(old){revision=Number(old.revision)+1;
-  w=(await client.query(`UPDATE weekly_risk_reviews SET status='PENDING',approval_stage='SAFETY',safety_approved_by=NULL,safety_approved_at=NULL,safety_comment='',revision=$2,snapshot=$3::jsonb,snapshot_hash=$4,
+  w=(await client.query(`UPDATE weekly_risk_reviews SET status='PENDING',approval_stage=$9,safety_approved_by=NULL,safety_approved_at=NULL,safety_comment='',revision=$2,snapshot=$3::jsonb,snapshot_hash=$4,
   meeting_notes=$5,attendees=$6,meeting_date=$7,submitted_by=$8,submitted_at=now(),approved_by=NULL,approved_at=NULL,decision_comment=NULL,locked_at=NULL,
   cancelled_by=NULL,cancelled_at=NULL,cancel_reason=NULL,archived_by=NULL,archived_at=NULL,archived_reason=NULL,archived_from_status=NULL WHERE id=$1 RETURNING *`,
-  [old.id,revision,snapshot,hash,meeting,attendees,meetingDate,req.session.userId])).rows[0];
+  [old.id,revision,snapshot,hash,meeting,attendees,meetingDate,req.session.userId,initialStage])).rows[0];
   await client.query('DELETE FROM weekly_risk_items WHERE weekly_id=$1',[old.id]);
  }else{
   w=(await client.query(`INSERT INTO weekly_risk_reviews(site_id,week_start,meeting_notes,attendees,meeting_date,status,submitted_by,submitted_at,snapshot,snapshot_hash,approval_stage)
-  VALUES($1,$2,$3,$4,$5,'PENDING',$6,now(),$7::jsonb,$8,'SAFETY') RETURNING *`,[sid,start,meeting,attendees,meetingDate,req.session.userId,snapshot,hash])).rows[0];
+  VALUES($1,$2,$3,$4,$5,'PENDING',$6,now(),$7::jsonb,$8,$9) RETURNING *`,[sid,start,meeting,attendees,meetingDate,req.session.userId,snapshot,hash,initialStage])).rows[0];
  }
  for(const item of items)await client.query('INSERT INTO weekly_risk_items(weekly_id,risk_id) VALUES($1,$2)',[w.id,item.id]);
  const companySnapshot=JSON.stringify(await Promise.all(companies.map(async c=>{
@@ -758,9 +765,9 @@ app.post('/api/v7/weekly',auth,async(req,res,next)=>{try{
    WHERE ws.site_id=$1 AND ws.week_start=$2 AND ws.contractor_id=$3`,[sid,start,c.contractor_id])).rows[0];
   return {contractor_id:c.contractor_id,contractor_name:c.name,...approved};
  })));
- await client.query(`INSERT INTO weekly_risk_revisions(weekly_id,revision,snapshot,snapshot_hash,meeting_notes,attendees,meeting_date,submitted_by,contractor_approvals,safety_user_id,director_user_id)
- VALUES($1,$2,$3::jsonb,$4,$5,$6,$7,$8,$9::jsonb,$10,$11)`,[w.id,revision,snapshot,hash,meeting,attendees,meetingDate,req.session.userId,companySnapshot,config.safety_user_id,config.director_user_id]);
- await client.query(`INSERT INTO weekly_risk_events(weekly_id,revision,action,actor_id,comment) VALUES($1,$2,'SUBMIT',$3,$4)`,[w.id,revision,req.session.userId,'협력사 1차 승인 검증 완료 · 원청 안전관리자 결재 대기']);
+ await client.query(`INSERT INTO weekly_risk_revisions(weekly_id,revision,snapshot,snapshot_hash,meeting_notes,attendees,meeting_date,submitted_by,contractor_approvals,safety_user_id,director_user_id,allow_self_review,review_role)
+ VALUES($1,$2,$3::jsonb,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12,$13)`,[w.id,revision,snapshot,hash,meeting,attendees,meetingDate,req.session.userId,companySnapshot,reviewRole==='NONE'?null:config.safety_user_id,config.director_user_id,config.allow_self_review!==false,reviewRole]);
+ await client.query(`INSERT INTO weekly_risk_events(weekly_id,revision,action,actor_id,comment) VALUES($1,$2,'SUBMIT',$3,$4)`,[w.id,revision,req.session.userId,'협력사 승인 검증 완료 · '+(reviewRole==='NONE'?'현장소장 최종 결재 대기':reviewRole==='MANAGER'?'현장관리자 검토 대기':'안전관리자 검토 대기')]);
  await client.query('COMMIT');res.json({...w,item_count:items.length});
  }catch(e){await client.query('ROLLBACK');if(e.code==='23505')return res.status(409).json({error:'동일 주차가 이미 상신되었습니다.'});throw e}finally{client.release()}
 }catch(e){next(e)}});
@@ -802,12 +809,15 @@ app.post('/api/v7/weekly/:id/decision',auth,async(req,res,next)=>{try{
   }
   const stage=w.approval_stage;
   if(!['SAFETY','DIRECTOR'].includes(stage)){await client.query('ROLLBACK');return res.status(409).json({error:'결재 단계가 올바르지 않습니다.'})}
-  const config=await approverConfig(w.site_id,client);
+  const config=(await client.query('SELECT safety_user_id,director_user_id,allow_self_review,review_role FROM weekly_risk_revisions WHERE weekly_id=$1 AND revision=$2',[w.id,w.revision])).rows[0];
+  const reviewRole=config?.review_role||'SAFETY_MANAGER';
   const assigned=stage==='SAFETY'?config?.safety_user_id:config?.director_user_id;
-  if(Number(assigned)!==Number(req.session.userId)||!(await validStageUser(client,w.site_id,req.session.userId,stage))){
+  if(!config||stage==='SAFETY'&&reviewRole==='NONE'){await client.query('ROLLBACK');return res.status(409).json({error:'상신 당시 결재선 정보가 올바르지 않습니다.'})}
+  if(Number(assigned)!==Number(req.session.userId)||!(await validStageUser(client,w.site_id,req.session.userId,stage,reviewRole))){
    await client.query('ROLLBACK');return res.status(403).json({error:'현재 단계의 지정 결재자만 승인 또는 반려할 수 있습니다.'});
   }
-  if(stage==='DIRECTOR'&&!w.safety_approved_at){await client.query('ROLLBACK');return res.status(409).json({error:'원청 안전관리자 승인 이력이 없습니다.'})}
+  if(stage==='SAFETY'&&action==='APPROVE'&&config?.allow_self_review===false&&(Number(w.submitted_by)===Number(req.session.userId)||(Array.isArray(w.snapshot)&&w.snapshot.some(r=>Number(r.author_id)===Number(req.session.userId))))){await client.query('ROLLBACK');return res.status(403).json({error:'자기 검토 금지 설정으로 승인할 수 없습니다.'})}
+  if(stage==='DIRECTOR'&&reviewRole!=='NONE'&&!w.safety_approved_at){await client.query('ROLLBACK');return res.status(409).json({error:'원청 중간 검토 승인 이력이 없습니다.'})}
   let updated;
   if(action==='REJECT'){
    updated=(await client.query("UPDATE weekly_risk_reviews SET status='REJECTED',decision_comment=$2 WHERE id=$1 RETURNING *",[w.id,comment])).rows[0];
@@ -856,11 +866,11 @@ app.get('/api/v8/weekly/:id/report',auth,async(req,res,next)=>{try{
  const safetyEvent=stages.filter(e=>e.stage==='SAFETY').at(-1);
  const directorEvent=stages.filter(e=>e.stage==='DIRECTOR').at(-1);
  const stageDecisionText=e=>!e?'대기':e.action==='APPROVE'?'승인':'반려';
- const approvalTrail=rev.safety_user_id||rev.director_user_id?`<h3>3단계 결재 기록</h3>
+ const approvalTrail=rev.safety_user_id||rev.director_user_id?`<h3>${rev.review_role==='NONE'?'2':'3'}단계 결재 기록</h3>
  <table><thead><tr><th>단계</th><th>업체 / 결재자</th><th>상태</th><th>일시</th><th>의견</th></tr></thead><tbody>
  ${companyApprovals.map(c=>`<tr><td>1차 · 협력사 관리자</td><td>${h(c.contractor_name)} / ${h(c.approved_by_name||'-')}</td><td>${h(c.status)}</td><td>${reportTime(c.approved_at)}</td><td>-</td></tr>`).join('')||'<tr><td>1차</td><td>원청 자체 작성</td><td>해당 없음</td><td>-</td><td>-</td></tr>'}
- <tr><td>2차 · 원청 안전관리자</td><td>${h(safetyEvent?.actor_name||'-')}</td><td>${stageDecisionText(safetyEvent)}</td><td>${reportTime(safetyEvent?.created_at)}</td><td>${h(safetyEvent?.comment||'-')}</td></tr>
- <tr><td>3차 · 원청 현장소장</td><td>${h(directorEvent?.actor_name||'-')}</td><td>${directorEvent?.action==='APPROVE'?'최종 승인':stageDecisionText(directorEvent)}</td><td>${reportTime(directorEvent?.created_at)}</td><td>${h(directorEvent?.comment||'-')}</td></tr></tbody></table>`:'<p>V16 이전 문서: 3단계 결재 기록이 존재하지 않습니다. 이전 승인 기록을 그대로 표시합니다.</p>';
+ ${rev.review_role==='NONE'?'':`<tr><td>2차 · ${rev.review_role==='MANAGER'?'원청 현장관리자':'원청 안전관리자'}</td><td>${h(safetyEvent?.actor_name||'-')}</td><td>${stageDecisionText(safetyEvent)}</td><td>${reportTime(safetyEvent?.created_at)}</td><td>${h(safetyEvent?.comment||'-')}</td></tr>`}
+ <tr><td>${rev.review_role==='NONE'?'2':'3'}차 · 원청 현장소장</td><td>${h(directorEvent?.actor_name||'-')}</td><td>${directorEvent?.action==='APPROVE'?'최종 승인':stageDecisionText(directorEvent)}</td><td>${reportTime(directorEvent?.created_at)}</td><td>${h(directorEvent?.comment||'-')}</td></tr></tbody></table>`:'<p>V16 이전 문서: 3단계 결재 기록이 존재하지 않습니다. 이전 승인 기록을 그대로 표시합니다.</p>';
  const body=items.map((r,i)=>`<tr><td>${i+1}</td><td>${h(r.contractor_name||(r.entry_mode==='PRIME'?'원청 자체 작성':'업체 정보 확인 필요'))}</td><td>${h(r.author_name||'-')}</td><td>${h(r.area)}</td><td>${h(r.work)}</td><td>${h(r.hazard)}</td><td>${h(r.frequency)}×${h(r.severity)}=${h(r.score)}</td><td>${h(r.measure)}</td></tr>`).join('');
  res.set({'Content-Type':'text/html; charset=utf-8','Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'}).send(`<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>${h(w.site_name)} 주간 위험성평가 ${datestr(w.week_start)}</title><style>body{font-family:'Malgun Gothic',Arial,sans-serif;color:#1e293b;padding:24px}table{width:100%;border-collapse:collapse;font-size:11px}th,td{border:1px solid #94a3b8;padding:6px;vertical-align:top;word-break:break-all}th{background:#e2e8f0}h1{font-size:22px}.report-heading{display:flex;align-items:center;justify-content:space-between;gap:30px;margin-bottom:15px}.approval-seal{display:flex;flex-direction:column;justify-content:center;align-items:center;gap:3px;width:146px;min-height:102px;border:3px double currentColor;border-radius:10px;color:#a87829;text-align:center;transform:rotate(-2deg);padding:7px}.approval-seal span{font-size:10px;font-weight:bold}.approval-seal strong{font-size:21px}.approval-seal small{font-size:10px}.approval-seal.approved{color:#0f7752}.approval-seal.rejected{color:#b43c4b}.approval-seal.cancelled{color:#617185}.meta{line-height:1.9}.note{white-space:pre-wrap;border:1px solid #cbd5e1;padding:10px}@media print{button{display:none}@page{size:A4 landscape;margin:12mm}body{padding:0}}</style></head><body><div class="report-heading"><h1>주간 통합 위험성평가서</h1>${printSeal}</div><div class="meta">현장: ${h(w.site_name)}<br>평가 주차: ${datestr(w.week_start)} ~ ${datestr(new Date(new Date(w.week_start).getTime()+6*86400000))}<br>회의일: ${datestr(rev.meeting_date)||'-'} · 참석자: ${h(rev.attendees)||'-'}<br>상신자: ${h(w.submitted_by_name)||'-'} · 최종 승인자: ${h(printedApproval||'-')} · 승인일: ${datestr(printedApprovedAt)}<br>상태: ${h(printLabel)} · 차수: ${h(rev.revision)} · 평가 항목: ${items.length}건${printedCancellation}</div>${approvalTrail}<h3>회의 및 검토 내용</h3><div class="note">${h(rev.meeting_notes)}</div><h3>주간 위험요인 통합 목록</h3><table><thead><tr><th>No.</th><th>협력업체</th><th>작성자</th><th>구역</th><th>작업</th><th>위험요인</th><th>빈도×강도</th><th>감소대책</th></tr></thead><tbody>${body}</tbody></table><p>승인 당시 평가 항목 스냅샷을 출력한 조회용 보고서입니다. 인쇄 대화상자에서 PDF로 저장할 수 있습니다. 화면의 결재 표시는 서버 기록을 시각화한 것이며 법정 전자서명이나 별도 법정 서식을 대체하지 않습니다. 기존 V7 이전 평가서의 최초 스냅샷은 업그레이드 당시 보존된 내용일 수 있습니다.</p><button onclick="window.print()">인쇄 / PDF 저장</button></body></html>`);
 }catch(e){next(e)}});
@@ -1246,6 +1256,85 @@ app.delete("/api/users/:id/sites/:siteId",auth,async(req,res)=>{
  await pool.query("DELETE FROM memberships WHERE user_id=$1 AND site_id=$2",[req.params.id,req.params.siteId]);
  res.json({ok:true});
 });
+
+// V17: delegated account administration. Global account endpoints remain ADMIN-only.
+const V17_SITE_ROLES=new Set(['USER','CONTRACTOR_MANAGER','SAFETY_MANAGER','SITE_DIRECTOR']);
+const v17CompanyRole=role=>['USER','CONTRACTOR_MANAGER'].includes(role);
+function v17Editable(target,actorId){return !!target&&Number(target.id)!==Number(actorId)&&target.global_role==='USER'&&Number(target.site_count)===1&&V17_SITE_ROLES.has(target.role)}
+async function v17SiteManager(req,res,sid){
+ if(!Number.isSafeInteger(sid)||sid<1||!(await can(req,sid,['MANAGER']))){res.status(403).json({error:'담당 현장의 현장관리자만 계정을 관리할 수 있습니다.'});return false}return true;
+}
+async function v17AccountAudit(client,req,sid,uid,action,details){
+ await client.query("INSERT INTO admin_events(actor_id,category,action,object_id,details) VALUES($1,'site_users',$2,$3,$4::jsonb)",[req.session.userId,action,String(uid),JSON.stringify({site_id:sid,...details})]);
+}
+app.get('/api/v17/site-accounts',auth,async(req,res,next)=>{try{
+ const sid=Number(req.query.site_id);if(!await v17SiteManager(req,res,sid))return;
+ const rows=await q(`SELECT u.id,u.name,u.username,u.active,u.archived_at,u.archive_reason,u.role global_role,m.role,
+ cm.contractor_id,c.name contractor_name,(SELECT count(*)::int FROM memberships z WHERE z.user_id=u.id) site_count
+ FROM memberships m JOIN users u ON u.id=m.user_id LEFT JOIN contractor_memberships cm ON cm.user_id=u.id AND cm.site_id=m.site_id
+ LEFT JOIN contractors c ON c.id=cm.contractor_id AND c.site_id=m.site_id WHERE m.site_id=$1 ORDER BY u.archived_at NULLS FIRST,c.name NULLS FIRST,u.name`,[sid]);
+ res.json(rows.map(r=>({...r,editable:v17Editable(r,req.session.userId)})));
+}catch(e){next(e)}});
+app.post('/api/v17/site-accounts',auth,async(req,res,next)=>{try{
+ const sid=Number(req.body.site_id),name=String(req.body.name||'').trim(),username=cleanUsername(req.body.username),password=req.body.password,role=req.body.role,cid=Number(req.body.contractor_id)||null;
+ if(!await v17SiteManager(req,res,sid))return;
+ if(!name||name.length>100||!username||!validUsername(username)||!validPassword(password)||!V17_SITE_ROLES.has(role)||v17CompanyRole(role)!==!!cid)return res.status(400).json({error:'이름, 로그인 아이디(영문 시작 4~30자), 10자 이상 비밀번호, 현장 권한 및 소속 업체를 확인하세요.'});
+ const ph=await bcrypt.hash(password,12),client=await pool.connect();try{
+  await client.query('BEGIN');await client.query('SELECT pg_advisory_xact_lock($1,0)',[sid]);
+  if(cid&&!(await client.query('SELECT id FROM contractors WHERE id=$1 AND site_id=$2 AND active=true',[cid,sid])).rows.length){await client.query('ROLLBACK');return res.status(400).json({error:'담당 현장의 활성 협력업체를 선택하세요.'})}
+  if((await client.query('SELECT id FROM users WHERE lower(username)=$1 OR lower(email)=$1',[username])).rows.length){await client.query('ROLLBACK');return res.status(409).json({error:'이미 사용 중인 로그인 아이디입니다.'})}
+  // Internal placeholder only: users can sign in with username, no real email required.
+  const email=`site-${crypto.randomUUID()}@account.invalid`;
+  const u=(await client.query("INSERT INTO users(name,email,username,password_hash,role) VALUES($1,$2,$3,$4,'USER') RETURNING id,name,username",[name,email,username,ph])).rows[0];
+  await client.query('INSERT INTO memberships(user_id,site_id,role) VALUES($1,$2,$3)',[u.id,sid,role]);
+  if(cid)await client.query('INSERT INTO contractor_memberships(user_id,site_id,contractor_id,assigned_by) VALUES($1,$2,$3,$4)',[u.id,sid,cid,req.session.userId]);
+  await v17AccountAudit(client,req,sid,u.id,'CREATE',{name,username,role,contractor_id:cid});
+  await client.query('COMMIT');res.status(201).json(u);
+ }catch(e){await client.query('ROLLBACK');if(e.code==='23505')return res.status(409).json({error:'이미 사용 중인 로그인 아이디입니다.'});throw e}finally{client.release()}
+}catch(e){next(e)}});
+app.patch('/api/v17/site-accounts/:id',auth,async(req,res,next)=>{try{
+ const sid=Number(req.body.site_id),uid=Number(req.params.id),action=String(req.body.action||'');
+ if(!await v17SiteManager(req,res,sid))return;
+ if(!Number.isSafeInteger(uid)||uid<1||!['EDIT','RESET','DISABLE','ENABLE','ARCHIVE','RESTORE'].includes(action))return res.status(400).json({error:'계정 및 작업을 확인하세요.'});
+ const client=await pool.connect();try{
+  await client.query('BEGIN');await client.query('SELECT pg_advisory_xact_lock($1,0)',[sid]);
+  const target=(await client.query(`SELECT u.id,u.name,u.username,u.role global_role,u.active,u.archived_at,m.role,cm.contractor_id,
+  (SELECT count(*)::int FROM memberships z WHERE z.user_id=u.id) site_count FROM users u JOIN memberships m ON m.user_id=u.id AND m.site_id=$2
+  LEFT JOIN contractor_memberships cm ON cm.user_id=u.id AND cm.site_id=m.site_id WHERE u.id=$1 FOR UPDATE OF u,m`,[uid,sid])).rows[0];
+  const fail=async(code,error)=>{await client.query('ROLLBACK');return res.status(code).json({error})};
+  if(!v17Editable(target,req.session.userId))return await fail(403,'본인·상위 관리자·다른 현장과 공유하는 계정은 최고관리자만 변경할 수 있습니다.');
+  if(action==='RESTORE'?!target.archived_at:!!target.archived_at)return await fail(409,'계정 보관 상태를 확인하세요.');
+  let details={name:target.name};
+  const pending=async()=>!!(await client.query(`SELECT w.id FROM weekly_risk_reviews w JOIN weekly_risk_revisions r ON r.weekly_id=w.id AND r.revision=w.revision
+   WHERE w.site_id=$1 AND w.status='PENDING' AND (r.safety_user_id=$2 OR r.director_user_id=$2) LIMIT 1`,[sid,uid])).rows.length;
+  if(action==='EDIT'){
+   const name=String(req.body.name||'').trim(),username=cleanUsername(req.body.username),role=req.body.role,cid=Number(req.body.contractor_id)||null;
+   if(!name||name.length>100||!username||!validUsername(username)||!V17_SITE_ROLES.has(role)||v17CompanyRole(role)!==!!cid)return await fail(400,'이름, 아이디, 권한, 소속 업체를 확인하세요.');
+   if(role!==target.role&&await pending())return await fail(409,'진행 중인 원청 결재가 있어 권한을 변경할 수 없습니다.');
+   if(cid&&!(await client.query('SELECT id FROM contractors WHERE id=$1 AND site_id=$2 AND active=true',[cid,sid])).rows.length)return await fail(400,'담당 현장의 활성 협력업체를 선택하세요.');
+   if((await client.query('SELECT id FROM users WHERE id<>$1 AND (lower(username)=$2 OR lower(email)=$2)',[uid,username])).rows.length)return await fail(409,'이미 사용 중인 로그인 아이디입니다.');
+   await client.query('UPDATE users SET name=$1,username=$2,session_version=session_version+1 WHERE id=$3',[name,username,uid]);
+   await client.query('UPDATE memberships SET role=$1 WHERE user_id=$2 AND site_id=$3',[role,uid,sid]);
+   if(cid)await client.query(`INSERT INTO contractor_memberships(user_id,site_id,contractor_id,assigned_by) VALUES($1,$2,$3,$4)
+    ON CONFLICT(user_id,site_id) DO UPDATE SET contractor_id=EXCLUDED.contractor_id,assigned_by=EXCLUDED.assigned_by,assigned_at=now()`,[uid,sid,cid,req.session.userId]);
+   else await client.query('DELETE FROM contractor_memberships WHERE user_id=$1 AND site_id=$2',[uid,sid]);
+   details={before:{name:target.name,username:target.username,role:target.role,contractor_id:target.contractor_id},after:{name,username,role,contractor_id:cid}};
+  }else if(action==='RESET'){
+   if(!validPassword(req.body.password))return await fail(400,'새 비밀번호는 10~128자로 입력하세요.');
+   await client.query('UPDATE users SET password_hash=$1,session_version=session_version+1 WHERE id=$2',[await bcrypt.hash(req.body.password,12),uid]);
+  }else if(action==='ARCHIVE'){
+   const reason=String(req.body.reason||'').trim();if(reason.length<5||reason.length>500)return await fail(400,'보관 사유를 5~500자로 입력하세요.');
+   if(await pending())return await fail(409,'진행 중인 원청 결재를 완료 또는 반려한 뒤 보관하세요.');
+   await client.query('UPDATE users SET active=false,archived_at=now(),archived_by=$1,archive_reason=$2,session_version=session_version+1 WHERE id=$3',[req.session.userId,reason,uid]);details.reason=reason;
+  }else if(action==='RESTORE'){
+   await client.query('UPDATE users SET archived_at=NULL,archived_by=NULL,archive_reason=NULL,active=false,session_version=session_version+1 WHERE id=$1',[uid]);
+  }else{
+   if(action==='DISABLE'&&await pending())return await fail(409,'진행 중인 원청 결재를 완료 또는 반려한 뒤 사용 중지하세요.');
+   await client.query('UPDATE users SET active=$1,session_version=session_version+1 WHERE id=$2',[action==='ENABLE',uid]);
+  }
+  await v17AccountAudit(client,req,sid,uid,action,details);await client.query('COMMIT');res.json({ok:true});
+ }catch(e){await client.query('ROLLBACK');if(e.code==='23505')return res.status(409).json({error:'이미 사용 중인 로그인 아이디입니다.'});throw e}finally{client.release()}
+}catch(e){next(e)}});
 
 // 관리자가 사이트 안에서 직접 양식/메뉴를 구성합니다. 기존 양식 및 기록은 숨김 처리로 보존합니다.
 app.get("/api/custom/forms",auth,async(req,res,next)=>{try{
@@ -1714,6 +1803,6 @@ app.get('/api/v5/report',auth,async(req,res,next)=>{try{
 }catch(e){next(e)}});
 
 // 배포 파일 확인용 읽기 전용 엔드포인트. 로그인·DB·R2 설정을 공개하지 않는다.
-app.get('/api/version',(req,res)=>res.set('Cache-Control','no-store').json({version:'16.0.0',release:'2026-11-24',ui:'three-stage-approval-v16'}));
+app.get('/api/version',(req,res)=>res.set('Cache-Control','no-store').json({version:'18.0.0',release:'2026-11-25',ui:'site-approval-route-v18'}));
 app.use((req,res)=>{if(req.method==="GET")res.sendFile(path.join(__dirname,"public","index.html"));else res.status(404).json({error:"요청을 찾을 수 없습니다."})});
 init().then(()=>app.listen(PORT,"0.0.0.0",()=>console.log(`Safety app running on ${PORT}`))).catch(e=>{console.error(e);process.exit(1)});

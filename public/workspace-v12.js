@@ -89,13 +89,13 @@
     let primary=''; let secondary='';
     if (!isDoc) {
       primary=count>0?'<button class="v12-main-button" type="button" onclick="v12ShowMode(\'lookup\')">작성 기록 확인</button>':'<button class="v12-main-button" type="button" onclick="v12ShowMode(\'write\')">위험요인 작성</button>';
-      secondary=count>0&&canApprove()?'<button class="v12-text-button" type="button" onclick="v12ShowMode(\'compose\')">취합·상신으로 이동</button>':'<button class="v12-text-button" type="button" onclick="v12ShowMode(\'lookup\')">업체별 기록 확인</button>';
+      secondary=count>0&&(typeof v17CanSubmit==='function'?v17CanSubmit():canApprove())?'<button class="v12-text-button" type="button" onclick="v12ShowMode(\'compose\')">취합·상신으로 이동</button>':'<button class="v12-text-button" type="button" onclick="v12ShowMode(\'lookup\')">업체별 기록 확인</button>';
     } else if (pending && canApprove()) {
       primary=`<button class="v12-main-button success" type="button" onclick="decideV7Weekly(${Number(record.id)},'APPROVE')">이 평가서 최종 승인</button>`;
       secondary=`<button class="v12-text-button danger" type="button" onclick="decideV7Weekly(${Number(record.id)},'REJECT')">반려</button>`;
     } else if (pending) {
       primary='<span class="v12-awaiting">원청 담당자의 최종 결재를 기다리는 중</span>';
-    } else if (['REJECTED','CANCELLED'].includes(record.status) && canApprove()) {
+    } else if (['REJECTED','CANCELLED'].includes(record.status) && (typeof v17CanSubmit==='function'?v17CanSubmit():canApprove())) {
       primary=`<button class="v12-main-button" type="button" onclick="v8ReloadRejected('${safe(week)}')">수정 후 재상신 준비</button>`;
     } else if (approved) {
       primary='<span class="v12-done-label">✓ 최종 결재가 완료된 문서입니다</span>';

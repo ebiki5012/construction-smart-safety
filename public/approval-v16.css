@@ -14,7 +14,7 @@
 .v16-settings summary,.v16-history-toggle summary{cursor:pointer;font-size:12.5px;font-weight:750;color:#31577f;list-style:revert}
 .v16-settings summary span{font-size:11px;color:#71839b;margin-left:8px}
 .v16-settings>p{font-size:12px;color:#65758b;line-height:1.65;margin:11px 0}
-.v16-config-fields{display:grid;grid-template-columns:1fr 1fr auto;align-items:end;gap:10px}
+.v16-config-fields{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));align-items:end;gap:10px}
 .v16-config-fields label{display:flex;flex-direction:column;gap:5px;font-size:11px;font-weight:700;color:#536982}
 .v16-config-fields select{height:38px;min-width:0;border-radius:8px;border:1px solid #ccd8e7;padding:7px;background:white;color:#243950}
 .v16-config-fields button,.v16-refresh,.v16-inline-actions button{border-radius:8px;border:1px solid #cddae9;background:#f4f8fd;color:#31577d;padding:9px 11px;font-size:12px;font-weight:750;cursor:pointer}
@@ -61,3 +61,5 @@
 @media(max-width:760px){.v12-weekly .v16-approver-card,.v12-weekly .v16-company-card{padding:15px}.v16-card-heading{flex-wrap:wrap}.v16-company-row{align-items:stretch;flex-direction:column}.v16-company-right{align-items:flex-start}.v16-inline-actions{justify-content:flex-start}.v16-config-fields{grid-template-columns:1fr}.v16-assigned-line{gap:6px}.v16-assigned-line>span{padding:10px}.v16-assigned-line strong{font-size:12px}.v16-document-trail{padding:13px}.v16-step{gap:8px;padding:10px}.v16-step-status{white-space:normal;text-align:right;max-width:85px}.v16-decision-actions button{width:100%;justify-content:center}}
 
 .v12-weekly #v12Focus .v12-main-button.success,.v12-weekly #v12Focus .v12-text-button.danger{display:none!important}
+
+.v16-config-fields label[hidden]{display:none!important}.v16-config-fields button{justify-self:start}

@@ -10,7 +10,9 @@
   const currentSite=()=>typeof sid!=='undefined'&&sid!=='all'?String(sid):'';
   const currentWeek=()=>day(byId('v10WeekPicker')?.value||byId('v7WeekStart')?.value||(typeof v7Monday==='function'?v7Monday():''));
   const safeApi=(path,options)=>api(path,options);
-  const stageText=r=>r.status==='APPROVED'?'최종 승인 완료':r.status==='REJECTED'?'반려 · 재상신 필요':r.status==='CANCELLED'?'승인 취소':r.status==='PENDING'&&r.approval_stage==='SAFETY'?'2차 · 원청 안전관리자 검토 대기':r.status==='PENDING'&&r.approval_stage==='DIRECTOR'?'3차 · 원청 현장소장 최종 승인 대기':r.status==='PENDING'?'V16 이전 결재 대기 문서':r.status==='ARCHIVED'?'보관된 문서':'상신 전';
+  const reviewerLabel=r=>r?.review_role==='MANAGER'?'원청 현장관리자':'원청 안전관리자';
+  const finalNo=r=>r?.review_role==='NONE'?'2':'3';
+  const stageText=r=>r.status==='APPROVED'?'최종 승인 완료':r.status==='REJECTED'?'반려 · 재상신 필요':r.status==='CANCELLED'?'승인 취소':r.status==='PENDING'&&r.approval_stage==='SAFETY'?`2차 · ${reviewerLabel(r)} 검토 대기`:r.status==='PENDING'&&r.approval_stage==='DIRECTOR'?`${finalNo(r)}차 · 원청 현장소장 최종 승인 대기`:r.status==='PENDING'?'V16 이전 결재 대기 문서':r.status==='ARCHIVED'?'보관된 문서':'상신 전';
   const state={site:null,week:null,queue:null,config:null,request:0,detailRequest:0};
   const notify=msg=>typeof toast==='function'?toast(msg):alert(msg);
   const companyStatus=c=>{
@@ -23,15 +25,23 @@
   };
   function configView(config){
     const host=byId('v16ApproverSetup');if(!host)return;
+    const mode=config?.review_role||'SAFETY_MANAGER',skip=mode==='NONE';
     const safety=esc(config?.safety_name||'미지정'),director=esc(config?.director_name||'미지정');
     const editable=!!config?.can_configure;
     const candidates=Array.isArray(config?.candidates)?config.candidates:[];
     const opts=(kind,value)=>'<option value="">결재자 선택</option>'+candidates.filter(x=>x.role===kind).map(x=>`<option value="${Number(x.id)}" ${Number(x.id)===Number(value)?'selected':''}>${esc(x.name)}</option>`).join('');
-    host.innerHTML=`<div class="v16-card-heading"><div><span class="v16-eyebrow">APPROVAL ROUTE</span><h3>원청 결재선</h3><p>협력사별 1차 승인 이후 안전관리자 검토 → 현장소장 최종 승인</p></div>${editable?'<span class="v16-setting-label">현장별 설정</span>':''}</div>
-    <div class="v16-assigned-line"><span><b>2차 · 안전관리자</b><strong>${safety}</strong></span><i aria-hidden="true">→</i><span><b>3차 · 현장소장</b><strong>${director}</strong></span></div>
-    ${editable?`<details class="v16-settings" id="v16ConfigEditor"><summary>결재 담당자 지정·변경 <span>설정 열기</span></summary><p>최고관리자의 <b>사용자·권한 관리</b>에서 먼저 각 사용자를 원청 안전관리자 / 원청 현장소장으로 현장 배정해야 합니다. 결재 중인 문서가 있으면 담당자를 변경할 수 없습니다.</p>
-    <div class="v16-config-fields"><label>2차 원청 안전관리자<select id="v16SafetySelect">${opts('SAFETY_MANAGER',config.safety_user_id)}</select></label><label>3차 원청 현장소장<select id="v16DirectorSelect">${opts('SITE_DIRECTOR',config.director_user_id)}</select></label><button type="button" onclick="v16SaveApprovers()">결재선 저장</button></div></details>`:''}`;
+    host.innerHTML=`<div class="v16-card-heading"><div><span class="v16-eyebrow">SITE APPROVAL ROUTE</span><h3>현장별 결재선</h3><p>현장관리자가 지정한 결재선이 모든 신규 상신 문서에 자동 적용됩니다.</p></div>${editable?'<span class="v16-setting-label">관리자 전용</span>':''}</div>
+    <div class="v16-assigned-line"><span><b>1차 · 협력사 관리자</b><strong>소속 업체별 승인</strong></span><i aria-hidden="true">→</i>${skip?'':`<span><b>2차 · ${reviewerLabel(config)}</b><strong>${safety}</strong></span><i aria-hidden="true">→</i>`}<span><b>${finalNo(config)}차 · 현장소장</b><strong>${director}</strong></span></div>
+    ${editable?`<details class="v16-settings" id="v16ConfigEditor"><summary>현장 결재라인 구성 <span>관리자 설정</span></summary><p>사용자 관리에서 먼저 결재 담당자를 현장에 배정하세요. 결재 진행 중에는 결재선을 변경할 수 없습니다. 일반 작성자는 변경할 수 없습니다.</p>
+    <div class="v16-config-fields"><label>결재 유형<select id="v18ReviewRole" onchange="v18ChangeRoute()"><option value="SAFETY_MANAGER" ${mode==='SAFETY_MANAGER'?'selected':''}>3단계 · 안전관리자 검토</option><option value="MANAGER" ${mode==='MANAGER'?'selected':''}>3단계 · 현장관리자 검토</option><option value="NONE" ${skip?'selected':''}>2단계 · 현장소장 직접 결재</option></select></label><label id="v18ReviewerField" ${skip?'hidden':''}>중간 검토자<select id="v16SafetySelect" ${skip?'disabled':''}>${opts(mode,config.safety_user_id)}</select></label><label>최종 결재자 · 현장소장<select id="v16DirectorSelect">${opts('SITE_DIRECTOR',config.director_user_id)}</select></label><button type="button" onclick="v16SaveApprovers()">현장 결재선 저장</button></div><label id="v18SelfField" style="${skip?'display:none':'display:flex'};align-items:center;gap:8px;margin-top:12px"><input id="v17SelfReview" type="checkbox" style="width:auto" ${config.allow_self_review!==false?'checked':''}> 중간 검토자의 본인 작성·상신 문서 검토 허용</label><small>2단계 선택은 내부 결재선에만 적용되며 법정 안전관리자 선임 의무와 별개입니다. 기존 결재 이력은 변경되지 않습니다.</small></details>`:''}`;
   }
+  function changeRoute(){
+    const mode=byId('v18ReviewRole')?.value,select=byId('v16SafetySelect'),field=byId('v18ReviewerField'),self=byId('v18SelfField');
+    if(!select||!field)return;
+    field.hidden=mode==='NONE';select.disabled=mode==='NONE';if(self)self.style.display=mode==='NONE'?'none':'flex';
+    select.innerHTML='<option value="">결재자 선택</option>'+(state.config?.candidates||[]).filter(x=>x.role===mode).map(x=>`<option value="${Number(x.id)}" ${mode===state.config.review_role&&Number(x.id)===Number(state.config.safety_user_id)?'selected':''}>${esc(x.name)}</option>`).join('');
+  }
+  window.v18ChangeRoute=changeRoute;
   function queueView(queue){
     const host=byId('v16CompanyQueue');if(!host)return;
     const companies=Array.isArray(queue?.companies)?queue.companies:[];
@@ -61,10 +71,11 @@
     }catch(e){if(token!==state.request)return;const host=byId('v16CompanyQueue');if(host)host.innerHTML=`<div class="v16-empty">승인 현황을 불러오지 못했습니다: ${esc(e.message)} <button type="button" onclick="v16Refresh()">다시 시도</button></div>`;}
   }
   async function saveApprovers(){
-    const site=currentSite(),safety=Number(byId('v16SafetySelect')?.value),director=Number(byId('v16DirectorSelect')?.value);
-    if(!safety||!director||safety===director)return notify('서로 다른 안전관리자와 현장소장을 지정하세요.');
+    const site=currentSite(),reviewRole=byId('v18ReviewRole')?.value||'SAFETY_MANAGER',safety=reviewRole==='NONE'?null:Number(byId('v16SafetySelect')?.value),director=Number(byId('v16DirectorSelect')?.value);
+    if(!state.config?.can_configure||String(state.config.site_id)!==site)return notify('현장 결재선 관리 권한을 확인하세요.');
+    if(!director||reviewRole!=='NONE'&&(!safety||safety===director))return notify('현장소장과 필요한 중간 검토자를 지정하세요.');
     if(!confirm('이 현장의 원청 결재선을 저장할까요?'))return;
-    try{await safeApi('/api/v16/approvers',{method:'PUT',body:JSON.stringify({site_id:site,safety_user_id:safety,director_user_id:director})});notify('결재선이 저장되었습니다.');await refresh();}
+    try{await safeApi('/api/v16/approvers',{method:'PUT',body:JSON.stringify({site_id:site,review_role:reviewRole,safety_user_id:safety,director_user_id:director,allow_self_review:byId('v17SelfReview')?.checked!==false})});notify('결재선이 저장되었습니다.');await refresh();}
     catch(e){notify(e.message);}
   }
   async function submitCompany(id){
@@ -91,10 +102,10 @@
   function actionsFor(record){
     const pending=record.status==='PENDING';
     const assigned=record.approval_stage==='SAFETY'?record.safety_user_id:record.director_user_id;
-    const neededRole=record.approval_stage==='SAFETY'?'SAFETY_MANAGER':'SITE_DIRECTOR';
+    const neededRole=record.approval_stage==='SAFETY'?(record.review_role||'SAFETY_MANAGER'):'SITE_DIRECTOR';
     const canDecide=pending&&Number(assigned)===Number(me?.id)&&role()===neededRole;
     const id=Number(record.id);
-    if(canDecide)return `<button type="button" class="v16-action-approve" onclick="v16DecideWeekly(${id},'APPROVE')">${record.approval_stage==='SAFETY'?'2차 검토 승인 → 현장소장에게 전달':'3차 최종 승인'}</button><button type="button" class="v16-action-reject" onclick="v16DecideWeekly(${id},'REJECT')">반려</button>`;
+    if(canDecide)return `<button type="button" class="v16-action-approve" onclick="v16DecideWeekly(${id},'APPROVE')">${record.approval_stage==='SAFETY'?'2차 검토 승인 → 현장소장에게 전달':`${finalNo(record)}차 최종 승인`}</button><button type="button" class="v16-action-reject" onclick="v16DecideWeekly(${id},'REJECT')">반려</button>`;
     if(pending&&record.approval_stage==='LEGACY'&&['MANAGER','ADMIN'].includes(role()))return `<button type="button" class="v16-action-reject" onclick="v16DecideWeekly(${id},'REJECT')">기존 문서 반려 후 재상신</button>`;
     if(pending)return '<span class="v16-awaiting">지정 결재자의 처리를 기다리고 있습니다.</span>';
     if(record.status==='APPROVED')return '<span class="v16-complete">✓ 최종 결재 완료 · 결재 이력 보존</span>';
@@ -115,12 +126,12 @@
       (companies.length?companies.map(c=>stepRow('01',`${c.contractor_name} · 협력사 관리자`,c.approved_by_name||'승인자 확인 필요',c.status==='APPROVED'?'승인 완료':'확인 필요',c.approved_at,'done')).join(''):stepRow('01','협력사 1차 승인','원청 자체 작성','해당 없음',null,'done'));
     const safetyStatus=safety?'검토 승인':rejection?.stage==='SAFETY'?'반려':record.status==='PENDING'&&record.approval_stage==='SAFETY'?'결재 대기':legacy?'이력 없음':'미도달';
     const directorStatus=director?'최종 승인':rejection?.stage==='DIRECTOR'?'반려':record.status==='PENDING'&&record.approval_stage==='DIRECTOR'?'결재 대기':legacy?'이력 없음':'미도달';
-    const second=stepRow('02','원청 안전관리자',safety?.actor_name||detail?.safety_name||record.safety_assignee_name||'미지정',safetyStatus,safety?.created_at,safety?'done':safetyStatus==='결재 대기'?'current':safetyStatus==='반려'?'reject':'future');
-    const third=stepRow('03','원청 현장소장',director?.actor_name||detail?.director_name||record.director_assignee_name||'미지정',directorStatus,director?.created_at,director?'done':directorStatus==='결재 대기'?'current':directorStatus==='반려'?'reject':'future');
-    const history=stageEvents.map(e=>`<div class="v16-event-row"><time>${clock(e.created_at)}</time><span>${Number(e.revision)}차 · ${e.stage==='SAFETY'?'원청 안전관리자':'원청 현장소장'} · ${e.action==='APPROVE'?'승인':'반려'}</span><b>${esc(e.actor_name||'-')}</b>${e.comment?`<small>${esc(e.comment)}</small>`:''}</div>`).join('');
+    const second=record.review_role==='NONE'?'':stepRow('02',reviewerLabel(record),safety?.actor_name||detail?.safety_name||record.safety_assignee_name||'미지정',safetyStatus,safety?.created_at,safety?'done':safetyStatus==='결재 대기'?'current':safetyStatus==='반려'?'reject':'future');
+    const third=stepRow('0'+finalNo(record),'원청 현장소장',director?.actor_name||detail?.director_name||record.director_assignee_name||'미지정',directorStatus,director?.created_at,director?'done':directorStatus==='결재 대기'?'current':directorStatus==='반려'?'reject':'future');
+    const history=stageEvents.map(e=>`<div class="v16-event-row"><time>${clock(e.created_at)}</time><span>${Number(e.revision)}차 · ${e.stage==='SAFETY'?reviewerLabel(e):'원청 현장소장'} · ${e.action==='APPROVE'?'승인':'반려'}</span><b>${esc(e.actor_name||'-')}</b>${e.comment?`<small>${esc(e.comment)}</small>`:''}</div>`).join('');
     const companyHistory=(Array.isArray(detail?.companies)?detail.companies:[]).map(e=>`<div class="v16-event-row"><time>${clock(e.created_at)}</time><span>${esc(e.contractor_name)} · ${e.action==='SUBMIT'?'제출':e.action==='APPROVE'?'1차 승인':'반려'}</span><b>${esc(e.actor_name||'-')}</b>${e.comment?`<small>${esc(e.comment)}</small>`:''}</div>`).join('');
     const div=document.createElement('section');div.className='v16-document-trail';
-    div.innerHTML=`<div class="v16-trail-head"><div><span class="v16-eyebrow">APPROVAL HISTORY</span><h4>3단계 결재 진행 현황</h4><p>${esc(stageText(record))} · ${Number(record.revision)}차 평가서</p></div><span class="v16-doc-chip">${esc(record.status==='APPROVED'?'완료':record.status==='PENDING'?'진행 중':'이력 조회')}</span></div>
+    div.innerHTML=`<div class="v16-trail-head"><div><span class="v16-eyebrow">APPROVAL HISTORY</span><h4>${finalNo(record)}단계 결재 진행 현황</h4><p>${esc(stageText(record))} · ${Number(record.revision)}차 평가서</p></div><span class="v16-doc-chip">${esc(record.status==='APPROVED'?'완료':record.status==='PENDING'?'진행 중':'이력 조회')}</span></div>
       ${legacy?'<p class="v16-legacy-warning">V16 이전에 상신된 문서입니다. 이전 3단계 결재 이력은 생성되지 않았으며, 기존 승인 여부만 보존합니다.</p>':''}
       <div class="v16-steps">${first}${second}${third}</div>
       ${rejection?`<p class="v16-rejection">반려 사유: ${esc(rejection.comment||record.decision_comment||'-')}</p>`:''}
@@ -141,7 +152,7 @@
       const title=focus.querySelector('.v12-focus-title h3');if(title)title.textContent=stageText(record);
       const desc=focus.querySelector('.v12-focus-title p');if(desc)desc.textContent=record.status==='PENDING'?'현재 결재 단계와 담당자를 아래에서 확인하세요. 승인/반려 이력은 서버에 저장됩니다.':record.status==='APPROVED'?'최종 승인 완료 · 각 단계별 승인자와 시간을 아래에서 확인할 수 있습니다.':legacy?'이전 버전 문서는 승인 이력을 임의로 생성하지 않습니다.':'이 문서의 결재 이력을 확인하세요.';
       const buttons=focus.querySelector('.v12-focus-actions');if(buttons)buttons.innerHTML=actionsFor(record)+`<button class="v12-text-button" type="button" onclick="window.open('/api/v8/weekly/${Number(record.id)}/report','_blank')">인쇄·PDF</button>`;
-      const last=focus.querySelector('.v12-accountability>div:last-child');if(last){const name=record.status==='APPROVED'?record.approved_by_name||'-':record.approval_stage==='DIRECTOR'?record.director_assignee_name||'미지정':record.safety_assignee_name||'미지정';last.innerHTML=`<span>${record.status==='APPROVED'?'최종 승인자':'현재 결재 담당자'}</span><strong>${esc(name)}</strong><small>${record.status==='APPROVED'?clock(record.approved_at):record.approval_stage==='SAFETY'?'2차 검토 대기':record.approval_stage==='DIRECTOR'?'3차 최종 승인 대기':'이력 확인'}</small>`;}
+      const last=focus.querySelector('.v12-accountability>div:last-child');if(last){const name=record.status==='APPROVED'?record.approved_by_name||'-':record.approval_stage==='DIRECTOR'?record.director_assignee_name||'미지정':record.safety_assignee_name||'미지정';last.innerHTML=`<span>${record.status==='APPROVED'?'최종 승인자':'현재 결재 담당자'}</span><strong>${esc(name)}</strong><small>${record.status==='APPROVED'?clock(record.approved_at):record.approval_stage==='SAFETY'?'2차 검토 대기':record.approval_stage==='DIRECTOR'?`${finalNo(record)}차 최종 승인 대기`:'이력 확인'}</small>`;}
     }
   }
   async function loadDocument(record){
@@ -155,25 +166,25 @@
     const record=(typeof v7WeeklyRows!=='undefined'?v7WeeklyRows:[]).find(x=>Number(x.id)===Number(id));
     if(!record||record.status!=='PENDING')return notify('이미 처리된 문서입니다. 새로고침 후 확인하세요.');
     const allowed=record.approval_stage==='LEGACY'?['MANAGER','ADMIN'].includes(role())&&action==='REJECT':
-      Number(record.approval_stage==='SAFETY'?record.safety_user_id:record.director_user_id)===Number(me?.id)&&role()===(record.approval_stage==='SAFETY'?'SAFETY_MANAGER':'SITE_DIRECTOR');
+      Number(record.approval_stage==='SAFETY'?record.safety_user_id:record.director_user_id)===Number(me?.id)&&role()===(record.approval_stage==='SAFETY'?(record.review_role||'SAFETY_MANAGER'):'SITE_DIRECTOR');
     if(!allowed)return notify('현재 단계의 지정 결재자만 처리할 수 있습니다.');
     let comment='';
     if(action==='REJECT'){const input=prompt(`${day(record.week_start)} · ${stageText(record)}\n반려 사유를 입력하세요.`);if(input===null)return;comment=input.trim();if(!comment)return notify('반려 사유를 입력하세요.');}
-    else if(!confirm(`${day(record.week_start)} · ${Number(record.revision)||1}차 평가서를 ${record.approval_stage==='SAFETY'?'안전관리자 검토 승인':'현장소장 최종 승인'}하시겠습니까?`))return;
-    try{await safeApi(`/api/v7/weekly/${id}/decision`,{method:'POST',body:JSON.stringify({action,comment})});notify(action==='REJECT'?'평가서를 반려했습니다.':record.approval_stage==='SAFETY'?'2차 승인 완료 · 현장소장 결재 대기':'3차 최종 승인 완료');
+    else if(!confirm(`${day(record.week_start)} · ${Number(record.revision)||1}차 평가서를 ${record.approval_stage==='SAFETY'?`${reviewerLabel(record)} 검토 승인`:'현장소장 최종 승인'}하시겠습니까?`))return;
+    try{await safeApi(`/api/v7/weekly/${id}/decision`,{method:'POST',body:JSON.stringify({action,comment})});notify(action==='REJECT'?'평가서를 반려했습니다.':record.approval_stage==='SAFETY'?'2차 승인 완료 · 현장소장 결재 대기':`${finalNo(record)}차 최종 승인 완료`);
       await loadV7WeeklyList('approval');reviewUi.selectWeekly(Number(id));await refresh();if(typeof loadDash==='function')loadDash();
     }catch(e){notify(e.message);await loadV7WeeklyList('approval');await refresh();}
   }
   async function submitWeekly(){
-    if(!['MANAGER','ADMIN'].includes(role()))return notify('원청 현장관리자만 통합 상신할 수 있습니다.');
+    if(!['MANAGER','ADMIN','SAFETY_MANAGER'].includes(role()))return notify('원청 현장관리자 또는 안전관리자만 통합 상신할 수 있습니다.');
     const week=day(byId('v7WeekStart')?.value),rows=typeof v7Preview!=='undefined'?v7Preview:[];
     if(!rows.length)return notify('상신할 위험요인이 없습니다.');
     const queue=state.queue;
     if(queue&&queue.week_start===week&&queue.companies.some(c=>c.status!=='APPROVED'||!c.is_current))return notify('협력사 1차 미승인 업체가 있습니다. 위 결재 현황을 확인하세요.');
-    if(!state.config?.safety_user_id||!state.config?.director_user_id)return notify('원청 결재선을 먼저 지정하세요.');
-    if(!confirm(`${week} 주간 위험요인 ${rows.length}건을 통합 상신할까요?\n협력사 1차 승인 후 원청 안전관리자 → 현장소장 순서로 결재됩니다.`))return;
+    if(String(state.config?.site_id)!==currentSite()||!state.config?.director_user_id||state.config.review_role!=='NONE'&&!state.config.safety_user_id)return notify('현장관리자가 결재선을 먼저 지정해야 합니다.');
+    if(!confirm(`${week} 주간 위험요인 ${rows.length}건을 통합 상신할까요?\n협력사 1차 승인 후 ${state.config.review_role==='NONE'?'현장소장 최종 결재':reviewerLabel(state.config)+' → 현장소장'} 순서로 결재됩니다.`))return;
     const payload={site_id:Number(currentSite()),week_start:week,meeting_date:byId('v8MeetingDate')?.value,attendees:byId('v8Attendees')?.value,meeting_notes:byId('v7MeetingNotes')?.value};
-    try{await safeApi('/api/v7/weekly',{method:'POST',body:JSON.stringify(payload)});notify('통합 상신 완료 · 원청 안전관리자 2차 결재 대기');await loadV7WeeklyList('approval');await refresh();if(typeof loadDash==='function')loadDash();}
+    try{await safeApi('/api/v7/weekly',{method:'POST',body:JSON.stringify(payload)});notify('통합 상신 완료 · '+(state.config.review_role==='NONE'?'현장소장 최종 결재 대기':reviewerLabel(state.config)+' 검토 대기'));await loadV7WeeklyList('approval');await refresh();if(typeof loadDash==='function')loadDash();}
     catch(e){notify(e.message);await refresh();}
   }
   function updateListLabels(){
@@ -218,5 +229,5 @@
   window.v16DecideWeekly=decideWeekly;
   window.decideV7Weekly=decideWeekly;
   window.submitV7Weekly=submitWeekly;
-  const version=byId('releaseVersion');if(version)version.textContent='SAFETY WORKSPACE · V16 / 협력사 → 안전관리자 → 현장소장 결재';
+  const version=byId('releaseVersion');if(version)version.textContent='SAFETY WORKSPACE · V18 / 현장별 결재선 관리';
 })();
