@@ -139,11 +139,13 @@ function renderV15Templates(){
   return `<article class="v15-template-card"><div class="v15-template-card-top"><div><span class="v15-template-area">${esc(x.area||'공종·구역 미지정')}</span><h4>${esc(x.name||x.work||'표준평가')}</h4><p>${esc(x.work||'작업명 미지정')}</p></div><span class="v15-template-score ${levelClass}">${Number(x.score)||'-'}점 · ${esc(level||'-')}</span></div><div class="v15-template-facts"><div><span>위험요인</span><p>${esc(x.hazard||'미입력')}</p></div><div><span>감소대책</span><p>${esc(x.measure||'미입력')}</p></div></div><div class="v15-template-bottom"><span>빈도 ${Number(x.frequency)||'-'} × 강도 ${Number(x.severity)||'-'}</span><button type="button" onclick="v15UseTemplate(${id})">이 평가서에 불러오기</button></div></article>`;
  }).join('')}</div>`:'<div class="v15-empty-state">조건에 맞는 표준평가가 없습니다. 검색어를 바꾸거나 기존 위험요인을 표준평가로 저장하세요.</div>';
 }
-function v15UseTemplate(id){
+async function v15UseTemplate(id){
  const x=v15Templates.find(t=>Number(t.id)===Number(id));if(!x)return toast('표준평가를 찾을 수 없습니다.');
- v12ShowMode('write');
+ const site=String(sid);v12ShowMode('write');
+ try{await loadSettings();}catch(e){return toast('평가 기준을 불러오지 못했습니다. 다시 시도하세요.');}
+ if(String(sid)!==site)return;
  for(const [key,value] of Object.entries({ra:x.area,rw:x.work,rh:x.hazard,rf:x.frequency,rs:x.severity,rm:x.measure})){
-  const node=$(key);if(node)node.value=value??'';
+  const node=$(key);if(node){node.value=value??'';if(key==='rf'||key==='rs')node.dispatchEvent(new Event('change',{bubbles:true}));}
  }
  const notice=$('v15TemplateApplied');if(notice){notice.classList.remove('hidden');notice.innerHTML=`<strong>✓ ${esc(x.name||x.work||'표준평가')} 불러오기 완료</strong><span>협력업체·작성일·적용기간을 확인하고 저장하세요. 아직 저장된 기록은 아닙니다.</span>`;}
  $('ra')?.scrollIntoView({behavior:'smooth',block:'center'});

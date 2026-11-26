@@ -1,0 +1,13 @@
+import fs from 'node:fs';import vm from 'node:vm';import assert from 'node:assert/strict';
+const read=p=>fs.readFileSync(new URL('../'+p,import.meta.url),'utf8');
+const html=read('public/index.html'),js=read('public/mobile-v20.js'),css=read('public/mobile-v20.css');
+assert(html.includes('/mobile-v20.js?v=20')&&html.includes('/mobile-v20.css?v=20'));
+new vm.Script(js);assert(js.includes('doc.prepend(listBox)')&&js.includes('compose.insertBefore(queue')&&js.includes('routeBox.append(setup)'));
+assert(js.includes('mark.after(node)')&&js.includes('dateBox.querySelector')&&js.includes('pair.append(node)'));
+assert(css.includes('.v19-save{position:static!important')&&css.includes('repeat(4,minmax(0,1fr))'));
+assert(js.includes('files.length>5')&&js.includes('input.click()'));
+const start=html.indexOf('let riskSettingsSite=null;'),end=html.indexOf('\n',html.indexOf('async function loadSettings()',start));
+const rf={value:'1',set innerHTML(v){this.value='1'}},rs={value:'1',set innerHTML(v){this.value='1'}};
+const ctx=vm.createContext({sid:1,$:id=>({rf,rs}[id]),esc:String,api:async()=>({frequency_labels:{1:'a',2:'b',3:'c'},severity_labels:{1:'a',2:'b',3:'c'}})});
+vm.runInContext(html.slice(start,end),ctx);await ctx.loadSettings();rf.value='2';rs.value='3';await ctx.loadSettings();assert.equal(rf.value,'2');assert.equal(rs.value,'3');ctx.sid=2;await ctx.loadSettings();assert.equal(rf.value,'1');assert.equal(rs.value,'1');
+console.log('PASS V20: separate task panels, desktop restoration, non-sticky save, photo validation, score preservation across settings refresh');
