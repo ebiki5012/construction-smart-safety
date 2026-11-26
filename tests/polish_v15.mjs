@@ -5,7 +5,7 @@ const read=x=>fs.readFileSync(new URL('../'+x,import.meta.url),'utf8');
 const html=read('public/index.html'),server=read('server.js'),js=read('public/polish-v15.js'),css=read('public/polish-v15.css'),admin=read('public/admin-center.html');
 assert(html.includes('/polish-v15.css?v=20261123-02')&&html.includes('/polish-v15.js?v=20261123-02'),'V15 styles and scripts must load');
 assert(html.includes('V18 · 현장별 결재선 관리'),'visible release marker missing');
-assert(server.includes("version:'18.0.0'")&&server.includes("ui:'site-approval-route-v18'"),'version endpoint missing');
+assert(server.includes("version:'19.0.0'")&&server.includes("ui:'mobile-workspace-v19'"),'version endpoint missing');
 assert(!html.includes('id="riskEntry"')&&!html.includes('id="tbmEntry"'),'proxy mode dropdown must not be visible');
 assert(html.includes('id="v15ArchiveReason"')&&html.includes('id="v15RestoreUserBtn"'),'user archive and restore controls missing');
 assert(html.includes('id="v15LibrarySummary"')&&html.includes('data-v15-size="sm"')&&html.includes('data-v15-layout="list"'),'photo origin/size/layout controls missing');

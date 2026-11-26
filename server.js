@@ -1803,6 +1803,6 @@ app.get('/api/v5/report',auth,async(req,res,next)=>{try{
 }catch(e){next(e)}});
 
 // 배포 파일 확인용 읽기 전용 엔드포인트. 로그인·DB·R2 설정을 공개하지 않는다.
-app.get('/api/version',(req,res)=>res.set('Cache-Control','no-store').json({version:'18.0.0',release:'2026-11-25',ui:'site-approval-route-v18'}));
+app.get('/api/version',(req,res)=>res.set('Cache-Control','no-store').json({version:'19.0.0',release:'2026-11-26',ui:'mobile-workspace-v19'}));
 app.use((req,res)=>{if(req.method==="GET")res.sendFile(path.join(__dirname,"public","index.html"));else res.status(404).json({error:"요청을 찾을 수 없습니다."})});
 init().then(()=>app.listen(PORT,"0.0.0.0",()=>console.log(`Safety app running on ${PORT}`))).catch(e=>{console.error(e);process.exit(1)});

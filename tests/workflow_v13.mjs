@@ -11,7 +11,7 @@ assert.match(html,/id="photoStage"[^>]*>[\s\S]*?value="before"[\s\S]*?value="aft
 assert.match(html,/id="actionUploadResult"/,'upload success/failure must be visible');
 assert(workspace.includes("state.autoMode?'write':state.mode")&&workspace.includes("matching?'document':'write'"),'new week starts with writing, submitted week with document review');
 assert(css.includes('v13-workflow')&&css.includes('v13-action-photo-field'),'V13 styles missing');
-assert(server.includes("version:'18.0.0'")&&server.includes("ui:'site-approval-route-v18'"),'server must identify new deployment');
+assert(server.includes("version:'19.0.0'")&&server.includes("ui:'mobile-workspace-v19'"),'server must identify new deployment');
 assert(html.includes('/workflow-v13.css?v='),'browser must load versioned CSS');
 const source=html.slice(html.indexOf('async function saveAction(){'),html.indexOf('async function loadActions(){'));
 const doneSource=html.slice(html.indexOf('async function done(id){'),html.indexOf('async function loadAdmin(){'));
