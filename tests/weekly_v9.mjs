@@ -16,5 +16,5 @@ assert(js.includes('window.renderV7Preview')&&js.includes('v9-preview-company')&
 assert(js.includes('reviewUi.showWeeklyDetails')&&js.includes('updateRibbon')&&js.includes('decideV7Weekly'),'approval state and action must be in clear ribbon');
 assert(css.includes('.v9-compose-grid{display:grid;grid-template-columns:')&&css.includes('.v9-approval-ribbon'),'desktop side-by-side workspace missing');
 assert(css.includes('@media(max-width:1100px)')&&css.includes('@media(max-width:620px)'),'responsive UI missing');
-assert(server.includes("app.get('/api/version'")&&server.includes("version:'22.0.0'"),'deployment verification endpoint missing');
+assert(server.includes("app.get('/api/version'")&&server.includes("version:'23.0.0'"),'deployment verification endpoint missing');
 console.log('PASS V9: weekly form/preview split, contractor cards, visible final approval, version check');

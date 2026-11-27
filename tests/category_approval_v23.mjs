@@ -1,0 +1,22 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';import vm from 'node:vm';import crypto from 'node:crypto';import {createRequire} from 'node:module';
+const require=createRequire(import.meta.url),C=require('../public/template-catalog-v22.js');
+const server=fs.readFileSync(new URL('../server.js',import.meta.url),'utf8'),html=fs.readFileSync(new URL('../public/index.html',import.meta.url),'utf8');
+const ui=fs.readFileSync(new URL('../public/approval-v16.js',import.meta.url),'utf8'),tpl=fs.readFileSync(new URL('../public/template-v22.js',import.meta.url),'utf8');
+assert(html.includes('<select id="riskCategory" required'));assert(html.includes('category:$("riskCategory").value'));assert(html.includes('작업 위치 / 구역'));assert.equal(C.validCategory('frame'),true);assert.equal(C.validCategory('골조공사'),false);assert.equal(C.classify({work:'굴착',category:'frame'}),'frame');assert.equal(C.areaLabel({category:'frame',area:'3층'}),'골조·철근콘크리트 · 3층');assert(tpl.includes("$('riskCategory').value=C.classify(r)"));assert(server.includes('ALTER TABLE risks ADD COLUMN IF NOT EXISTS category TEXT'));assert(ui.includes('v23-current-approval')&&ui.includes('v23IsMyTurn'));assert(ui.includes('contractor_history_available!==false'));assert(html.includes('value="MINE"'));
+const handlers={};let inserted,scope={allowed:true,restricted:false};const base={site_id:1,category:'frame',area:'3층 A구역',work:'굴착',hazard:'추락',measure:'난간 설치',frequency:2,severity:3,prime_self:true};
+const ctx=vm.createContext({app:{post:(path,auth,fn)=>handlers[path]=fn},auth:()=>{},can:async()=>true,companyScope:async()=>scope,one:async(sql,args)=>{if(sql.includes('INSERT INTO risks')){inserted=args;return {id:1,category:args[15]}}if(sql.includes('SELECT * FROM settings'))return {low_max:3,medium_max:5};if(sql.includes('SELECT * FROM risks'))return {id:1,...base};if(sql.includes('INSERT INTO templates'))return {category:args[10]};throw Error(sql)},user:async()=>({id:2}),v22Catalog:C,recordCompanyAllowed:async()=>true,riskCalc:(f,s)=>({frequency:f,severity:s,score:f*s,level:'높음'}),crypto,isoDate:v=>v});
+vm.runInContext(server.slice(server.indexOf('app.post("/api/risks"'),server.indexOf('// 비공개 R2 사진')),ctx);
+vm.runInContext(server.slice(server.indexOf('function v22TemplateMeta('),server.indexOf('app.get("/api/templates"')),ctx);
+vm.runInContext(server.slice(server.indexOf('app.post("/api/templates"'),server.indexOf("app.patch('/api/templates")),ctx);
+vm.runInContext(server.slice(server.indexOf('async function companyRiskFingerprint('),server.indexOf('async function approverConfig(')),ctx);
+async function call(path,body){let status=200,data;await handlers[path]({body},{status(n){status=n;return this},json(x){data=x}});return {status,data}}
+for(const bad of [undefined,'','철근','FRAME','made-up'])assert.equal((await call('/api/risks',{...base,category:bad})).status,400);
+assert.equal((await call('/api/risks',base)).data.category,'frame');assert.equal(inserted[2],'3층 A구역');assert.equal(inserted[15],'frame');
+assert.equal((await call('/api/templates',{site_id:1,name:'표준',category:'earth',hazard_type:'추락',source_risk_id:1})).status,400);
+assert.equal((await call('/api/templates',{site_id:1,name:'표준',category:'frame',hazard_type:'추락',source_risk_id:1})).data.category,'frame');
+const old={id:1,author_id:2,area:'3층',work:'작업',hazard:'추락',frequency:1,severity:2,score:2,level:'낮음',measure:'난간',risk_date:'2026-11-23',period_start:'2026-11-23',period_end:'2026-11-29',entry_mode:'DIRECT'};
+const fp=async row=>ctx.companyRiskFingerprint({query:async()=>({rows:[row]})},1,'2026-11-23',5);
+assert.equal((await fp({...old,category:null})).hash,crypto.createHash('sha256').update(JSON.stringify([old])).digest('hex'),'legacy fingerprints must not change after migration');
+assert.notEqual((await fp({...old,category:'frame'})).hash,(await fp({...old,category:'earth'})).hash,'category changes invalidate company approval');
+console.log('PASS V23: required shared category, server validation, source category consistency, legacy fingerprint preserved, category change invalidation, approval UI contracts');

@@ -70,7 +70,7 @@
     if (!host) return;
     document.querySelectorAll('[data-v8-risk-id]').forEach(btn => {const selected=String(btn.dataset.v8RiskId)===String(id);btn.classList.toggle('is-selected',selected);btn.setAttribute('aria-pressed',String(selected))});
     if (!r) {host.innerHTML=empty('상세 기록을 선택해 주세요','왼쪽 목록에서 평가를 선택하면 내용이 나타납니다.');return}
-    host.innerHTML = `<div class="v8-detail-eyebrow">위험성평가 · No. ${Number(r.id)||'-'}</div><h3 class="v8-detail-title">${safe(r.work||'작업명 미기록')}</h3><div class="v8-detail-sub">${statusChip(r.level||'위험도 미기록',r.level==='높음'?'bad':'')}<span>${safe(r.area||'구역 미기록')}</span></div>
+    host.innerHTML = `<div class="v8-detail-eyebrow">위험성평가 · No. ${Number(r.id)||'-'}</div><h3 class="v8-detail-title">${safe(r.work||'작업명 미기록')}</h3><div class="v8-detail-sub">${statusChip(r.level||'위험도 미기록',r.level==='높음'?'bad':'')}<span>${safe(window.V22Catalog?.areaLabel(r)||r.area||'구역 미기록')}</span></div>
       ${info([['협력업체',companyName(r)],['작성자',r.author_name||'-'],['작성일',day(r.risk_date)||'-'],['적용기간',`${day(r.period_start)||'-'} ~ ${day(r.period_end)||'-'}`],['위험도',`${Number(r.frequency)||'-'} (빈도) × ${Number(r.severity)||'-'} (강도) = ${Number(r.score)||'-'}점`]])}
       ${section('주요 위험요인',r.hazard)}${section('위험 감소대책',r.measure)}${buttons('risk',r)}`;
   };
@@ -138,7 +138,7 @@
 
   // 최고관리자 편집: 필드마다 연속 prompt을 띄우는 방식 제거
   const fieldDefinitions={
-    risk:[['risk_date','작성일','date'],['period_start','적용 시작일','date'],['period_end','적용 종료일','date'],['area','공종/구역'],['work','작업명'],['hazard','위험요인','textarea'],['frequency','빈도 (1~3)','number'],['severity','강도 (1~3)','number'],['measure','위험 감소대책','textarea']],
+    risk:[['risk_date','작성일','date'],['period_start','적용 시작일','date'],['period_end','적용 종료일','date'],['category','공종','category'],['area','작업 위치 / 구역'],['work','작업명'],['hazard','위험요인','textarea'],['frequency','빈도 (1~3)','number'],['severity','강도 (1~3)','number'],['measure','위험 감소대책','textarea']],
     tbm:[['tbm_date','실시일','date'],['team','팀·업체'],['work_name','작업명'],['people','참석 인원','number'],['hazard','위험요인','textarea'],['measure','안전 조치·감소대책','textarea']],
     action:[['item','조치내용','textarea'],['manager','담당자'],['due_date','조치기한','date'],['status','상태','status']],
     custom:[['record_date','기록일','date']]
@@ -159,6 +159,7 @@
       const val=kind==='date'?day(r[name]):String(r[name]??'');
       const wide=kind==='textarea'?'wide':'';
       if(kind==='textarea')return `<div class="${wide}"><label for="v8-edit-${safe(name)}">${safe(title)}</label><textarea id="v8-edit-${safe(name)}" name="${safe(name)}">${safe(val)}</textarea></div>`;
+      if(kind==='category')return `<div><label for="v8-edit-category">공종</label><select name="category" id="v8-edit-category">${!val?'<option value="">기존 미분류 유지</option>':''}${window.V22Catalog.groups.map(g=>`<option value="${g.id}" ${g.id===val?'selected':''}>${safe(g.name)}</option>`).join('')}</select></div>`;
       if(kind==='status')return `<div><label for="v8-edit-${safe(name)}">${safe(title)}</label><select name="${safe(name)}" id="v8-edit-${safe(name)}"><option value="OPEN" ${val==='OPEN'?'selected':''}>진행 중</option><option value="DONE" ${val==='DONE'?'selected':''}>완료</option></select></div>`;
       const limits=kind==='number'&&(['frequency','severity'].includes(name))?'min="1" max="3" step="1"':kind==='number'?'min="0" step="1"':'';
       return `<div><label for="v8-edit-${safe(name)}">${safe(title)}</label><input id="v8-edit-${safe(name)}" name="${safe(name)}" type="${kind==='date'?'date':kind==='number'?'number':'text'}" ${limits} value="${safe(val)}"></div>`;

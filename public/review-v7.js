@@ -74,7 +74,7 @@
       const filter = byId('reviewStatusFilter')?.value || 'ALL';
       const rows = state.weeklyRows
         .filter(r => state.weeklyMode !== 'completed' || r.status === 'APPROVED')
-        .filter(r => filter === 'ALL' || r.status === filter)
+        .filter(r => filter === 'ALL' || (filter==='MINE'?window.v23IsMyTurn?.(r):r.status === filter))
         .sort((a,b) => (a.status === 'PENDING' ? 0 : a.status === 'REJECTED' ? 1 : a.status === 'CANCELLED' ? 2 : 3) - (b.status === 'PENDING' ? 0 : b.status === 'REJECTED' ? 1 : b.status === 'CANCELLED' ? 2 : 3) || String(b.week_start).localeCompare(String(a.week_start)));
       host.innerHTML = rows.length ? rows.map(r => {
         const id = Number(r.id);

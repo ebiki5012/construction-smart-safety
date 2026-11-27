@@ -121,6 +121,7 @@ async function init(){
     CREATE TABLE IF NOT EXISTS site_preferences(site_id INT PRIMARY KEY REFERENCES sites(id) ON DELETE CASCADE, company_name TEXT, primary_color TEXT, logo_url TEXT, menu_visibility JSONB NOT NULL DEFAULT '{}');
     CREATE TABLE IF NOT EXISTS record_audit(id BIGSERIAL PRIMARY KEY, record_type TEXT NOT NULL, record_id INT NOT NULL, site_id INT NOT NULL, actor_id INT REFERENCES users(id), action TEXT NOT NULL, before_data JSONB, after_data JSONB, created_at TIMESTAMPTZ NOT NULL DEFAULT now());
     CREATE INDEX IF NOT EXISTS record_audit_site_time ON record_audit(site_id,created_at DESC);
+    ALTER TABLE risks ADD COLUMN IF NOT EXISTS category TEXT;
     ALTER TABLE risks ADD COLUMN IF NOT EXISTS period_start DATE;
     ALTER TABLE risks ADD COLUMN IF NOT EXISTS period_end DATE;
     ALTER TABLE risks ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
@@ -355,7 +356,7 @@ function isoDate(value){return typeof value==='string'?value.slice(0,10):value i
 function validMonday(date){return /^\d{4}-\d{2}-\d{2}$/.test(date)&&!Number.isNaN(Date.parse(date))&&new Date(date+'T00:00:00Z').getUTCDay()===1}
 const weeklyRowsSql=`SELECT r.id,r.author_id,r.area,r.work,r.hazard,r.measure,r.frequency,r.severity,r.score,r.level,
  r.risk_date,r.period_start,r.period_end,r.contractor_id,r.entry_mode,
- u.name author_name,c.name contractor_name FROM risks r
+ u.name author_name,c.name contractor_name,r.category FROM risks r
  LEFT JOIN users u ON u.id=r.author_id LEFT JOIN contractors c ON c.id=r.contractor_id
  WHERE r.site_id=$1 AND r.deleted_at IS NULL AND COALESCE(r.period_start,r.risk_date)<($2::date+7)
  AND COALESCE(r.period_end,r.period_start,r.risk_date)>=$2::date ORDER BY c.name NULLS LAST,r.id`;
@@ -478,11 +479,12 @@ app.put("/api/settings",auth,async(req,res)=>{
 // Stable, site/week/company-specific fingerprint: prevents approval of changed risk items.
 async function companyRiskFingerprint(client,siteId,week,contractorId){
  const result=await client.query(`SELECT id,author_id,area,work,hazard,frequency,severity,score,level,measure,
- risk_date,period_start,period_end,entry_mode FROM risks
+ risk_date,period_start,period_end,entry_mode,category FROM risks
  WHERE site_id=$1 AND contractor_id=$2 AND deleted_at IS NULL
  AND COALESCE(period_start,risk_date)<($3::date+7)
  AND COALESCE(period_end,period_start,risk_date)>=$3::date ORDER BY id`,[siteId,contractorId,week]);
- const rows=result.rows.map(r=>({...r,risk_date:isoDate(r.risk_date),period_start:isoDate(r.period_start),period_end:isoDate(r.period_end)}));
+ // Preserve historical fingerprints: the new category key is absent for legacy rows.
+ const rows=result.rows.map(r=>{const {category,...legacy}=r;return {...legacy,risk_date:isoDate(r.risk_date),period_start:isoDate(r.period_start),period_end:isoDate(r.period_end),...(category?{category}:{})}});
  return {count:rows.length,hash:crypto.createHash('sha256').update(JSON.stringify(rows)).digest('hex')};
 }
 async function approverConfig(siteId,client=pool){
@@ -690,6 +692,7 @@ app.get('/api/v16/weekly/:id/stages',auth,async(req,res,next)=>{try{
  ]);
  res.json({approval_stage:w.approval_stage,revision:w.revision,status:w.status,
   review_role:revision?.review_role||'SAFETY_MANAGER',safety_name:revision?.safety_name||null,director_name:revision?.director_name||null,
+  contractor_history_available:Array.isArray(revision?.contractor_approvals),
   contractor_approvals:(revision?.contractor_approvals||[]).filter(c=>!scope.restricted||Number(c.contractor_id)===scope.contractor_id),
   safety_approved_at:w.safety_approved_at,safety_approved_by:w.safety_approved_by,
   stages,companies});
@@ -881,7 +884,7 @@ app.get('/api/v8/weekly/:id/report',auth,async(req,res,next)=>{try{
  ${companyApprovals.map(c=>`<tr><td>1차 · 협력사 관리자</td><td>${h(c.contractor_name)} / ${h(c.approved_by_name||'-')}</td><td>${h(c.status)}</td><td>${reportTime(c.approved_at)}</td><td>-</td></tr>`).join('')||'<tr><td>1차</td><td>원청 자체 작성</td><td>해당 없음</td><td>-</td><td>-</td></tr>'}
  ${rev.review_role==='NONE'?'':`<tr><td>2차 · ${rev.review_role==='MANAGER'?'원청 현장관리자':'원청 안전관리자'}</td><td>${h(safetyEvent?.actor_name||'-')}</td><td>${stageDecisionText(safetyEvent)}</td><td>${reportTime(safetyEvent?.created_at)}</td><td>${h(safetyEvent?.comment||'-')}</td></tr>`}
  <tr><td>${rev.review_role==='NONE'?'2':'3'}차 · 원청 현장소장</td><td>${h(directorEvent?.actor_name||'-')}</td><td>${directorEvent?.action==='APPROVE'?'최종 승인':stageDecisionText(directorEvent)}</td><td>${reportTime(directorEvent?.created_at)}</td><td>${h(directorEvent?.comment||'-')}</td></tr></tbody></table>`:'<p>V16 이전 문서: 3단계 결재 기록이 존재하지 않습니다. 이전 승인 기록을 그대로 표시합니다.</p>';
- const body=items.map((r,i)=>`<tr><td>${i+1}</td><td>${h(r.contractor_name||(r.entry_mode==='PRIME'?'원청 자체 작성':'업체 정보 확인 필요'))}</td><td>${h(r.author_name||'-')}</td><td>${h(r.area)}</td><td>${h(r.work)}</td><td>${h(r.hazard)}</td><td>${h(r.frequency)}×${h(r.severity)}=${h(r.score)}</td><td>${h(r.measure)}</td></tr>`).join('');
+ const body=items.map((r,i)=>`<tr><td>${i+1}</td><td>${h(r.contractor_name||(r.entry_mode==='PRIME'?'원청 자체 작성':'업체 정보 확인 필요'))}</td><td>${h(r.author_name||'-')}</td><td>${h(v22Catalog.areaLabel(r))}</td><td>${h(r.work)}</td><td>${h(r.hazard)}</td><td>${h(r.frequency)}×${h(r.severity)}=${h(r.score)}</td><td>${h(r.measure)}</td></tr>`).join('');
  res.set({'Content-Type':'text/html; charset=utf-8','Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'}).send(`<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>${h(w.site_name)} 주간 위험성평가 ${datestr(w.week_start)}</title><style>body{font-family:'Malgun Gothic',Arial,sans-serif;color:#1e293b;padding:24px}table{width:100%;border-collapse:collapse;font-size:11px}th,td{border:1px solid #94a3b8;padding:6px;vertical-align:top;word-break:break-all}th{background:#e2e8f0}h1{font-size:22px}.report-heading{display:flex;align-items:center;justify-content:space-between;gap:30px;margin-bottom:15px}.approval-seal{display:flex;flex-direction:column;justify-content:center;align-items:center;gap:3px;width:146px;min-height:102px;border:3px double currentColor;border-radius:10px;color:#a87829;text-align:center;transform:rotate(-2deg);padding:7px}.approval-seal span{font-size:10px;font-weight:bold}.approval-seal strong{font-size:21px}.approval-seal small{font-size:10px}.approval-seal.approved{color:#0f7752}.approval-seal.rejected{color:#b43c4b}.approval-seal.cancelled{color:#617185}.meta{line-height:1.9}.note{white-space:pre-wrap;border:1px solid #cbd5e1;padding:10px}@media print{button{display:none}@page{size:A4 landscape;margin:12mm}body{padding:0}}</style></head><body><div class="report-heading"><h1>주간 통합 위험성평가서</h1>${printSeal}</div><div class="meta">현장: ${h(w.site_name)}<br>평가 주차: ${datestr(w.week_start)} ~ ${datestr(new Date(new Date(w.week_start).getTime()+6*86400000))}<br>회의일: ${datestr(rev.meeting_date)||'-'} · 참석자: ${h(rev.attendees)||'-'}<br>상신자: ${h(w.submitted_by_name)||'-'} · 최종 승인자: ${h(printedApproval||'-')} · 승인일: ${datestr(printedApprovedAt)}<br>상태: ${h(printLabel)} · 차수: ${h(rev.revision)} · 평가 항목: ${items.length}건${printedCancellation}</div>${approvalTrail}<h3>회의 및 검토 내용</h3><div class="note">${h(rev.meeting_notes)}</div><h3>주간 위험요인 통합 목록</h3><table><thead><tr><th>No.</th><th>협력업체</th><th>작성자</th><th>구역</th><th>작업</th><th>위험요인</th><th>빈도×강도</th><th>감소대책</th></tr></thead><tbody>${body}</tbody></table><p>승인 당시 평가 항목 스냅샷을 출력한 조회용 보고서입니다. 인쇄 대화상자에서 PDF로 저장할 수 있습니다. 화면의 결재 표시는 서버 기록을 시각화한 것이며 법정 전자서명이나 별도 법정 서식을 대체하지 않습니다. 기존 V7 이전 평가서의 최초 스냅샷은 업그레이드 당시 보존된 내용일 수 있습니다.</p><button onclick="window.print()">인쇄 / PDF 저장</button></body></html>`);
 }catch(e){next(e)}});
 // TBM: separate site-manager approval queue, independent of weekly risk approval.
@@ -911,6 +914,7 @@ app.get("/api/risks",auth,async(req,res)=>{
 });
 app.post("/api/risks",auth,async(req,res)=>{
  const sid=Number(req.body.site_id);if(!(await can(req,sid)))return res.status(403).json({error:"현장 권한이 없습니다."});
+ if(!v22Catalog.validCategory(req.body.category))return res.status(400).json({error:"공종을 목록에서 선택하세요."});
  if(![1,2,3].includes(Number(req.body.frequency))||![1,2,3].includes(Number(req.body.severity)))return res.status(400).json({error:'빈도와 강도를 각각 선택하세요.'});
  if(req.body.period_start&&req.body.period_end&&req.body.period_start>req.body.period_end)return res.status(400).json({error:"적용 시작일이 종료일보다 늦습니다."});
  const s=await one("SELECT * FROM settings WHERE site_id=$1",[sid])||{low_max:3,medium_max:5};
@@ -923,9 +927,9 @@ app.post("/api/risks",auth,async(req,res)=>{
  const contractorId=scope.restricted?scope.contractor_id:Number(req.body.contractor_id)||null;
  const entryMode=scope.restricted?'DIRECT':contractorId?'PROXY':'PRIME';
  const r=riskCalc(req.body.frequency,req.body.severity,s),u=await user(req);
- const x=await one(`INSERT INTO risks(site_id,risk_date,area,work,hazard,frequency,severity,score,level,measure,author_id,period_start,period_end,contractor_id,entry_mode)
- VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *`,
- [sid,req.body.date||null,req.body.area,req.body.work,req.body.hazard,r.frequency,r.severity,r.score,r.level,req.body.measure,u.id,req.body.period_start||null,req.body.period_end||null,contractorId,entryMode]);
+ const x=await one(`INSERT INTO risks(site_id,risk_date,area,work,hazard,frequency,severity,score,level,measure,author_id,period_start,period_end,contractor_id,entry_mode,category)
+ VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING *`,
+ [sid,req.body.date||null,req.body.area,req.body.work,req.body.hazard,r.frequency,r.severity,r.score,r.level,req.body.measure,u.id,req.body.period_start||null,req.body.period_end||null,contractorId,entryMode,req.body.category]);
  res.json(x);
 });
 
@@ -1070,6 +1074,7 @@ app.post("/api/templates",auth,async(req,res)=>{
  const meta=v22TemplateMeta(req.body),id=Number(req.body.source_risk_id);if(!meta||!Number.isSafeInteger(id)||id<1)return res.status(400).json({error:'표준평가 이름·공종·위험 유형 및 원본 기록을 확인하세요.'});
  if(!await recordCompanyAllowed(req,'risk',id,sid))return res.status(404).json({error:'원본 평가를 찾을 수 없습니다.'});
  const r=await one('SELECT * FROM risks WHERE id=$1 AND site_id=$2 AND deleted_at IS NULL',[id,sid]);if(!r)return res.status(404).json({error:'원본 평가를 찾을 수 없습니다.'});
+ if(r.category&&v22Catalog.validCategory(r.category)&&meta.category!==r.category)return res.status(400).json({error:"원본 위험성평가에서 선택한 공종으로 저장해야 합니다."});
  const x=await one(`INSERT INTO templates(site_id,name,area,work,hazard,frequency,severity,score,level,measure,category,hazard_type,contractor_id,source_risk_id)
  VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,[sid,meta.name,r.area,r.work,r.hazard,r.frequency,r.severity,r.score,r.level,r.measure,meta.category,meta.hazardType,r.contractor_id,id]);
  res.json(x);
@@ -1493,10 +1498,11 @@ app.patch("/api/records/:type/:id",auth,async(req,res,next)=>{try{
  if(['SUBMITTED','APPROVED'].includes(approval?.status)||['PENDING','APPROVED'].includes(workflowApproval?.status))return res.status(409).json({error:'상신·승인된 기록입니다. 먼저 최고관리자 정리 화면에서 결재를 취소해 주세요.'});
  if(type==='risk'&&await one(`SELECT id FROM weekly_risk_reviews WHERE site_id=$1 AND status IN ('PENDING','APPROVED')
   AND COALESCE(snapshot,'[]'::jsonb) @> jsonb_build_array(jsonb_build_object('id',$2::int)) LIMIT 1`,[record.site_id,record.id]))return res.status(409).json({error:'이 위험요인은 주간 평가서의 상신·승인본에 포함되어 있습니다. 먼저 주간 결재를 취소해 주세요.'});
- const allowed={risk:["risk_date","period_start","period_end","area","work","hazard","frequency","severity","measure"],tbm:["tbm_date","team","work_name","people","hazard","measure"],action:["item","manager","due_date","status"],custom:["record_date","form_data"]}[type];
+ const allowed={risk:["risk_date","period_start","period_end","category","area","work","hazard","frequency","severity","measure"],tbm:["tbm_date","team","work_name","people","hazard","measure"],action:["item","manager","due_date","status"],custom:["record_date","form_data"]}[type];
  const fields=Object.keys(req.body).filter(k=>allowed.includes(k));if(!fields.length)return res.status(400).json({error:"수정할 내용이 없습니다."});
  const nextRow={...record};for(const k of fields)nextRow[k]=req.body[k]??null;
  if(type==="risk"){
+  if(fields.includes("category")&&!v22Catalog.validCategory(nextRow.category)&&(nextRow.category!==null||record.category))return res.status(400).json({error:"공종을 목록에서 선택하세요."});
   if(nextRow.period_start&&nextRow.period_end&&String(nextRow.period_start).slice(0,10)>String(nextRow.period_end).slice(0,10))return res.status(400).json({error:"적용 기간을 확인하세요."});
   if(fields.includes("frequency")||fields.includes("severity")){const settings=await one("SELECT * FROM settings WHERE site_id=$1",[record.site_id])||{low_max:3,medium_max:5};const f=Number(nextRow.frequency),v=Number(nextRow.severity);if(![1,2,3].includes(f)||![1,2,3].includes(v))return res.status(400).json({error:"빈도와 강도는 1~3이어야 합니다."});Object.assign(nextRow,riskCalc(f,v,settings));fields.push("score","level")}
  }
@@ -1855,6 +1861,6 @@ app.use("/api/v21",(req,res,next)=>{res.set("Cache-Control","private, no-store")
 v21Board.register({app,auth,q,one,pool,user,siteRole,companyScope});
 
 // 배포 파일 확인용 읽기 전용 엔드포인트. 로그인·DB·R2 설정을 공개하지 않는다.
-app.get('/api/version',(req,res)=>res.set('Cache-Control','no-store').json({version:'22.0.0',release:'2026-11-27',ui:'template-catalog-v22'}));
+app.get('/api/version',(req,res)=>res.set('Cache-Control','no-store').json({version:'23.0.0',release:'2026-11-27',ui:'category-approval-v23'}));
 app.use((req,res)=>{if(req.method==="GET")res.sendFile(path.join(__dirname,"public","index.html"));else res.status(404).json({error:"요청을 찾을 수 없습니다."})});
 init().then(()=>app.listen(PORT,"0.0.0.0",()=>console.log(`Safety app running on ${PORT}`))).catch(e=>{console.error(e);process.exit(1)});

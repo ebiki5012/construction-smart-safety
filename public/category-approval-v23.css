@@ -1,0 +1,54 @@
+/* V23: a single compact approval timeline, high contrast and no redundant controls. */
+.v23-required{font-size:11px;font-weight:600;color:#3569a4;margin-left:4px}
+#riskCategory{font-weight:600;background-color:#fff;color:#24384f}
+#riskCategory:invalid{color:#66758a}
+#weekly .v16-document-trail{background:#fff;border:1px solid #dce4ee;border-radius:12px;padding:18px!important;margin:0 0 14px;box-shadow:none}
+#weekly .v16-trail-head{align-items:center;margin-bottom:12px}
+#weekly .v16-trail-head h4{font-size:18px;margin:0 0 4px;color:#172b42}
+#weekly .v16-trail-head p{font-size:12px;margin:0;color:#64748b}
+#weekly .v23-current-approval{padding:13px 15px;background:#f4f6f9;border-left:3px solid #8b9bb0;border-radius:7px;display:grid;gap:4px}
+#weekly .v23-current-approval.current{background:#eef5ff;border-left-color:#275cb2}
+#weekly .v23-current-approval.done{background:#edf8f2;border-left-color:#18754c}
+#weekly .v23-current-approval.reject{background:#fff2f1;border-left-color:#b13f47}
+#weekly .v23-current-approval small{font-size:12px;color:#55677d;font-weight:700}
+#weekly .v23-current-approval strong{font-size:17px;color:#1d3859;overflow-wrap:anywhere}
+#weekly .v23-current-approval p{font-size:12px;color:#52647a;margin:0;line-height:1.5}
+.v16-doc-chip.done{background:#e4f5eb;color:#176540}.v16-doc-chip.reject{background:#fde9e8;color:#a2353c}.v16-doc-chip.current{background:#e6efff;color:#214f9c}
+.v23-submitter{display:flex;justify-content:space-between;gap:6px 16px;flex-wrap:wrap;padding:11px 1px;border-bottom:1px solid #e3e9f1;color:#64748b;font-size:12px}.v23-submitter b{color:#24384f;margin-left:5px}
+#weekly .v16-document-trail .v16-steps{display:grid;grid-template-columns:1fr;gap:0;margin:7px 0 0}
+#weekly .v16-document-trail .v16-step{position:relative;display:grid!important;grid-template-columns:28px minmax(0,1fr)!important;align-items:start;gap:10px!important;border:0;border-radius:0;background:white;padding:11px 4px!important;min-width:0}
+#weekly .v16-document-trail .v16-step:not(:last-child):after{content:"";position:absolute;top:41px;bottom:-8px;left:17px;width:1px;background:#d8e2ef}
+#weekly .v16-document-trail .v16-step.current{background:#f3f7fe;border-radius:8px}
+#weekly .v16-step-number{width:26px;height:26px;border-radius:50%;font-size:13px;z-index:1}
+#weekly .v23-step-body{display:grid;gap:4px;min-width:0}
+#weekly .v23-step-role{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;min-width:0}
+#weekly .v23-step-role strong{font-size:13px!important;color:#263b53;line-height:1.4}
+#weekly .v16-step-status{font-size:11px!important;background:#edf1f5;color:#52647a;padding:3px 7px;border-radius:5px;max-width:none;white-space:normal;line-height:1.3}
+#weekly .v16-step.done .v16-step-status{background:#e7f5ec;color:#176640}
+#weekly .v16-step.current .v16-step-status{background:#dbeafe;color:#164b96}
+#weekly .v16-step.reject .v16-step-status{background:#fce8e7;color:#a33540}
+#weekly .v23-step-person{display:flex;justify-content:space-between;gap:4px 10px;flex-wrap:wrap;font-size:14px;font-weight:650;color:#20354e;overflow-wrap:anywhere}
+#weekly .v23-step-person time{font-size:12px;color:#5d7085;font-weight:400}
+#weekly .v23-company-proof-box{border:0;background:#f6f8fb;border-radius:6px;margin:3px 0;padding:7px 9px;font-size:12px;color:#49617e}
+#weekly .v23-company-proof-box summary{cursor:pointer;font-weight:650}
+#weekly .v23-company-proof{display:grid;grid-template-columns:minmax(70px,1fr) minmax(0,2fr);gap:8px;border-top:1px solid #e2e8f0;padding:6px 0;font-size:12px;overflow-wrap:anywhere}
+#weekly .v23-company-proof b{color:#304762}
+#weekly .v16-decision-actions{border-top:1px solid #e2e8f0;padding-top:12px;margin-top:6px;gap:8px}
+#weekly .v16-decision-actions .v23-print{margin-left:auto;background:white!important;border:1px solid #d6e0ed!important;color:#36516f!important;font-size:12px;font-weight:650;min-height:40px}
+#weekly .v16-decision-actions .v16-action-approve{background:#2459a9!important;color:white!important}
+#weekly .v16-decision-actions .v16-action-reject{background:#fff!important;color:#a03541!important;border:1px solid #e8c9cd!important}
+#weekly .v16-decision-actions .v16-awaiting,#weekly .v16-decision-actions .v16-complete{display:none}
+#weekly .v23-has-trail .review-detail-top,#weekly .v23-has-trail .review-actions{display:none!important}
+#weekly[data-v20-mode=document]:has(#v7WeeklyDetailsCard:not(.hidden) .v16-document-trail) #v12Focus{display:none!important}
+#weekly[data-v20-mode=document]:has(#v7WeeklyDetailsCard:not(.hidden) .v16-document-trail) .v20-company-history{display:none!important}
+#weekly[data-v20-mode=document]:has(#v7WeeklyDetailsCard:not(.hidden) .v16-document-trail) #v16ApproverSetup{display:none!important}
+#weekly[data-v20-mode=document]:has(#v7WeeklyDetailsCard:not(.hidden) .v16-document-trail) #v16CompanyQueue{display:none!important}
+#weekly .v16-stage-tag{font-size:12px;background:#f0f4fa;border-radius:5px;padding:6px;text-align:left;white-space:normal;overflow-wrap:anywhere}
+#weekly .v16-stage-tag.mine{color:#164b96;background:#e0edff}
+.v23-queue-progress{height:5px;border-radius:6px;background:#e0e8f1;margin:0 0 10px;overflow:hidden}.v23-queue-progress i{display:block;height:100%;background:#287750}
+.v16-count.not-done{background:#f0f4f9;color:#52647a}
+.v23-count-small{font-size:11px;color:#65758b;font-weight:400;margin-left:4px}
+.v16-company-row.v23-company-wait{border-left:3px solid #2459a9}.v16-company-row.v23-company-done{border-left:3px solid #228455}.v16-company-row.v23-company-reject,.v16-company-row.v23-company-stale{border-left:3px solid #b04852}
+@media(max-width:900px){#weekly .v16-document-trail{padding:12px!important}#weekly .v16-trail-head h4{font-size:16px!important}#weekly .v23-current-approval strong{font-size:15px!important}#weekly .v23-current-approval{padding:10px 12px}#weekly .v23-step-person{font-size:13px}#weekly .v16-decision-actions{display:flex;flex-wrap:wrap}#weekly .v16-decision-actions button{width:auto!important;min-height:42px;flex:1}#weekly .v16-decision-actions .v23-print{flex:0 1 auto;margin:0}#weekly .v23-company-proof{grid-template-columns:1fr;gap:2px}#weekly .v16-step-status{font-size:11px!important}#weekly .v23-step-role{gap:4px}#weekly .v16-company-right{flex-direction:row;justify-content:space-between;flex-wrap:wrap}#weekly .v16-inline-actions button{min-height:42px}}
+#weekly .v23-saved-risk{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;margin-top:10px;border:1px solid #cde8d9;border-radius:8px;background:#f1faf5;color:#216541;font-size:12px;line-height:1.4;flex-wrap:wrap}#weekly .v23-saved-risk.hidden{display:none!important}#weekly .v23-saved-risk button{min-height:40px;border:1px solid #bbd5c6;background:#fff!important;color:#216541!important;font-size:12px;font-weight:650;margin:0!important}
+@media(max-width:900px){#weekly .v16-decision-actions .v16-action-approve{flex:1.4;min-width:92px}#weekly .v16-decision-actions .v16-action-reject{flex:1;min-width:64px}#weekly .v16-decision-actions .v23-print{min-width:68px}}

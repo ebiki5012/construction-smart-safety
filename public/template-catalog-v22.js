@@ -14,6 +14,9 @@
  const types=['추락','낙하·비래','끼임·충돌','붕괴','감전','화재·폭발','질식·유해물질','넘어짐','근골격계','기타'];
  const patterns=[/추락|떨어짐|떨어질|개구부/,/낙하|비래|낙물|튀어|떨어지는 자재/,/끼임|협착|충돌|부딪|말림|접촉/,/붕괴|무너|전도|매몰/,/감전|누전/,/화재|폭발|불티|발화/,/질식|산소|유해|분진|중독|가스|흄/,/넘어짐|미끄|걸려|걸림/,/근골격|허리|중량물|반복/];
  const text=x=>String(x??'').normalize('NFKC').trim().toLowerCase();
+ const validCategory=id=>typeof id==='string'&&groups.some(g=>g.id===id);
+ const categoryName=id=>groups.find(g=>g.id===id)?.name||'';
+ const areaLabel=row=>[categoryName(row.category),row.area].filter(Boolean).filter((v,i,a)=>a.indexOf(v)===i).join(' · ');
  function classify(row){if(groups.some(g=>g.id===row.category))return row.category;for(const field of [row.work,row.area,row.name]){const value=text(field);const matches=groups.filter(g=>g.words.some(w=>value.includes(w)));if(matches.length){const sorted=matches.map(g=>[g,Math.max(...g.words.filter(w=>value.includes(w)).map(w=>w.length))]).sort((a,b)=>b[1]-a[1]);return sorted[0][0].id;}}return 'other';}
  function hazardType(row){if(types.includes(row.hazard_type))return row.hazard_type;const i=patterns.findIndex(p=>p.test(text(row.hazard)));return types[i<0?types.length-1:i];}
  const examples=[
@@ -52,5 +55,5 @@
  ['demo','철거 작업','질식·유해물질','철거 과정에서 분진·유해물질 노출','사전 유해물질 조사 결과에 따라 적합한 작업 방법, 격리·집진 및 보호구를 적용한다.']
  ].map(([category,work,hazard_type,hazard,measure],i)=>({id:'example-'+(i+1),category,work,name:work,area:groups.find(g=>g.id===category).name,hazard_type,hazard,measure,example:true}));
  function filter(rows,{category='',type='',work='',query='',source='all',favorites=[]}={}){const words=text(query).split(/\s+/).filter(Boolean);return rows.filter(r=> (!category||classify(r)===category)&&(!type||hazardType(r)===type)&&(!work||text(r.work)===text(work))&&(source==='all'||source==='saved'&&!r.example||source==='examples'&&r.example||source==='favorites'&&favorites.includes(String(r.id)))&&words.every(w=>text([r.name,r.area,r.work,r.hazard,r.measure,groups.find(g=>g.id===classify(r))?.name,hazardType(r)].join(' ')).includes(w)));}
- return {groups,types,classify,hazardType,examples,filter};
+ return {groups,types,classify,hazardType,examples,filter,validCategory,categoryName,areaLabel};
 });
