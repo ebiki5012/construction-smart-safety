@@ -1,0 +1,11 @@
+#weekly.v25-no-compose .v9-compose-form-pane,#weekly.v25-no-compose .v9-submit-group{display:none!important}
+#weekly.v25-no-compose .v9-compose-grid{grid-template-columns:minmax(0,1fr)!important}
+#weekly.v25-no-compose #reviewCompose .v9-editor-head{display:none!important}
+#weekly.v25-no-compose .v9-compose-preview-pane .v9-pane-title h4{font-size:0}
+#weekly.v25-no-compose .v9-compose-preview-pane .v9-pane-title h4::after{content:'작성된 위험요인 확인';font-size:15px}
+#weekly.v25-no-compose .v9-compose-preview-pane .v9-pane-title p{display:none}
+.v25-inbox{border:1px solid #dce5ef;border-radius:12px;padding:12px;margin-bottom:12px;background:#fff}
+.v25-inbox-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}.v25-inbox-head h3{font-size:16px;margin:0}.v25-inbox-head button{padding:7px 12px;background:#edf3fa;color:#245078;font-size:12px}
+#v25InboxRows{display:grid;gap:6px;max-height:340px;overflow:auto}#v25InboxRows p{font-size:13px;color:#52677d;margin:4px 0}
+#v25InboxRows .v25-inbox-row{display:flex;align-items:center;justify-content:space-between;text-align:left;gap:10px;background:#f5f8fc;color:#183c62;border:1px solid #dce5ef;padding:10px 12px;border-radius:8px;white-space:normal;width:100%;min-width:0;box-shadow:none}
+.v25-inbox-row span:first-child{display:grid;gap:3px;min-width:0}.v25-inbox-row strong{font-size:13px;overflow-wrap:anywhere}.v25-inbox-row small{font-size:12px;color:#52677d;overflow-wrap:anywhere}.v25-inbox-row span:last-child{font-size:12px;flex-shrink:0}.v25-next{background:#edf5ff;color:#184d8b;border-left:3px solid #3478c5;padding:10px 12px;font-size:13px;border-radius:6px}

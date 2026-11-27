@@ -415,7 +415,8 @@ app.get("/api/dashboard",auth,async(req,res,next)=>{try{
  const role=await siteRole(req,sid);
  const work=await one(`SELECT
  (SELECT count(*)::int FROM weekly_risk_reviews w JOIN weekly_risk_revisions wr ON wr.weekly_id=w.id AND wr.revision=w.revision WHERE w.site_id=$1 AND w.status='PENDING' AND ((w.approval_stage='SAFETY' AND wr.review_role=$3 AND wr.safety_user_id=$4) OR (w.approval_stage='DIRECTOR' AND $3='SITE_DIRECTOR' AND wr.director_user_id=$4))) my_weekly_pending,
- (SELECT count(*)::int FROM weekly_contractor_submissions ws JOIN contractors c ON c.id=ws.contractor_id AND c.active=true WHERE ws.site_id=$1 AND ws.week_start=date_trunc('week',(now() AT TIME ZONE 'Asia/Seoul')::date)::date AND ws.status='SUBMITTED' AND ($2::int IS NULL OR ws.contractor_id=$2)) company_submitted`,[sid,cid,role,req.session.userId]);
+ (SELECT count(*)::int FROM weekly_contractor_submissions ws JOIN contractors c ON c.id=ws.contractor_id AND c.active=true WHERE ws.site_id=$1 AND ws.status='SUBMITTED' AND ($2::int IS NULL OR ws.contractor_id=$2) AND NOT EXISTS(SELECT 1 FROM weekly_risk_reviews w WHERE w.site_id=ws.site_id AND w.week_start=ws.week_start AND w.status IN ('PENDING','APPROVED'))) company_submitted,
+ (SELECT count(*)::int FROM weekly_contractor_submissions ws JOIN contractors c ON c.id=ws.contractor_id AND c.active=true WHERE ws.site_id=$1 AND ws.status='APPROVED' AND ($2::int IS NULL OR ws.contractor_id=$2) AND NOT EXISTS(SELECT 1 FROM weekly_risk_reviews w WHERE w.site_id=ws.site_id AND w.week_start=ws.week_start AND w.status IN ('PENDING','APPROVED'))) company_approved_open`,[sid,cid,role,req.session.userId]);
  const recent=await q(`SELECT kind,id,record_date,title,author_name,contractor_name,contractor_id FROM (
  SELECT 'risk' kind,r.id,r.risk_date record_date,r.work title,u.name author_name,c.name contractor_name,r.contractor_id,r.created_at ts FROM risks r LEFT JOIN users u ON u.id=r.author_id LEFT JOIN contractors c ON c.id=r.contractor_id WHERE r.site_id=$1 AND r.deleted_at IS NULL AND ($2::int IS NULL OR r.contractor_id=$2)
  UNION ALL SELECT 'tbm',t.id,t.tbm_date,t.work_name,u.name,c.name,t.contractor_id,t.created_at FROM tbms t LEFT JOIN users u ON u.id=t.created_by LEFT JOIN contractors c ON c.id=t.contractor_id WHERE t.site_id=$1 AND t.deleted_at IS NULL AND ($2::int IS NULL OR t.contractor_id=$2)) x ORDER BY ts DESC LIMIT 12`,[sid,cid]);
@@ -505,6 +506,11 @@ async function validStageUser(client,siteId,userId,stage,reviewRole='SAFETY_MANA
  WHERE u.id=$1 AND m.site_id=$2 AND m.role=$3 AND u.role<>'ADMIN' AND u.active=true AND u.archived_at IS NULL`,[userId,siteId,role]);
  return !!r.rows.length;
 }
+async function companyManagers(client,siteId,contractorId){
+ return (await client.query(`SELECT u.id,u.name FROM memberships m JOIN contractor_memberships cm ON cm.user_id=m.user_id AND cm.site_id=m.site_id
+ JOIN users u ON u.id=m.user_id WHERE m.site_id=$1 AND cm.contractor_id=$2 AND m.role='CONTRACTOR_MANAGER'
+ AND u.role<>'ADMIN' AND u.active=true AND u.archived_at IS NULL ORDER BY u.name,u.id`,[siteId,contractorId])).rows;
+}
 async function companyIsLocked(client,siteId,week){
  const r=await client.query("SELECT id FROM weekly_risk_reviews WHERE site_id=$1 AND week_start=$2 AND status IN ('PENDING','APPROVED') LIMIT 1",[siteId,week]);
  return !!r.rows.length;
@@ -581,6 +587,10 @@ app.post('/api/v8/weekly/ready',auth,async(req,res,next)=>{try{
   const company=(await client.query('SELECT id FROM contractors WHERE id=$1 AND site_id=$2 AND active=true',[cid,sid])).rows[0];
   const fingerprint=await companyRiskFingerprint(client,sid,week,cid);
   if(!company||!fingerprint.count){await client.query('ROLLBACK');return res.status(409).json({error:'해당 주차에 소속 업체 위험요인을 먼저 작성하세요.'})}
+  const managers=await companyManagers(client,sid,cid);
+  if(!managers.length){await client.query('ROLLBACK');return res.status(409).json({error:'소속 업체의 협력사 관리자가 미지정입니다. 현장관리자에게 활성 협력사 관리자 계정 배정을 요청하세요. 기존 작성 기록은 유지됩니다.'})}
+  const previous=(await client.query(`SELECT * FROM weekly_contractor_submissions WHERE site_id=$1 AND week_start=$2 AND contractor_id=$3 FOR UPDATE`,[sid,week,cid])).rows[0];
+  if(previous?.risk_hash===fingerprint.hash&&['SUBMITTED','APPROVED'].includes(previous.status)){await client.query('ROLLBACK');return res.status(409).json({error:previous.status==='APPROVED'?'이미 1차 승인된 평가입니다. 원청 취합을 기다려 주세요.':'이미 제출되었습니다. 협력사 관리자 결재를 기다려 주세요.'})}
   const row=(await client.query(`INSERT INTO weekly_contractor_submissions(site_id,week_start,contractor_id,submitted_by,entry_mode,status,risk_hash,approved_by,approved_at,decision_comment)
    VALUES($1,$2,$3,$4,'DIRECT','SUBMITTED',$5,NULL,NULL,'')
    ON CONFLICT(site_id,week_start,contractor_id) DO UPDATE SET submitted_by=EXCLUDED.submitted_by,
@@ -640,14 +650,29 @@ app.get('/api/v16/contractor-approvals',auth,async(req,res,next)=>{try{
  for(const company of companies){
   const fingerprint=await companyRiskFingerprint(pool,sid,week,company.id);
   const current=!!company.risk_hash&&company.risk_hash===fingerprint.hash;
-  const managers=await q(`SELECT u.id,u.name FROM memberships m JOIN contractor_memberships cm ON cm.user_id=m.user_id AND cm.site_id=m.site_id
- JOIN users u ON u.id=m.user_id WHERE m.site_id=$1 AND cm.contractor_id=$2 AND m.role='CONTRACTOR_MANAGER'
- AND u.active=true AND u.archived_at IS NULL ORDER BY u.name`,[sid,company.id]);
+  const managers=await companyManagers(pool,sid,company.id);
   rows.push({...company,risk_count:fingerprint.count,is_current:current,
-   managers:managers.map(x=>x.name),can_approve:!locked&&role==='CONTRACTOR_MANAGER'&&scope.contractor_id===company.id&&company.status==='SUBMITTED'&&current,
-   can_submit:!locked&&['USER','CONTRACTOR_MANAGER'].includes(role)&&scope.contractor_id===company.id});
+   managers:managers.map(x=>x.name),can_approve:!locked&&role==='CONTRACTOR_MANAGER'&&Number(scope.contractor_id)===Number(company.id)&&company.status==='SUBMITTED'&&current&&managers.some(m=>Number(m.id)===Number(req.session.userId)),
+   can_submit:!locked&&['USER','CONTRACTOR_MANAGER'].includes(role)&&Number(scope.contractor_id)===Number(company.id)&&managers.length>0&&!(current&&['SUBMITTED','APPROVED'].includes(company.status))});
  }
  res.json({site_id:sid,week_start:week,locked,companies:rows});
+}catch(e){next(e)}});
+// V25: open company submissions across weeks, including those awaiting prime aggregation.
+app.get('/api/v25/company-inbox',auth,async(req,res,next)=>{try{
+ const sid=Number(req.query.site_id),scope=await companyScope(req,sid);
+ if(!scope.allowed)return res.status(403).json({error:'현장 접근 권한이 없습니다.'});
+ const rows=await q(`SELECT to_char(ws.week_start,'YYYY-MM-DD') week_start,ws.contractor_id,c.name,ws.status,ws.risk_hash,ws.submitted_at,ws.approved_at,
+ su.name submitted_by_name,au.name approved_by_name FROM weekly_contractor_submissions ws
+ JOIN contractors c ON c.id=ws.contractor_id AND c.site_id=ws.site_id
+ LEFT JOIN users su ON su.id=ws.submitted_by LEFT JOIN users au ON au.id=ws.approved_by
+ WHERE ws.site_id=$1 AND ($2::int IS NULL OR ws.contractor_id=$2)
+ AND NOT EXISTS(SELECT 1 FROM weekly_risk_reviews w WHERE w.site_id=ws.site_id AND w.week_start=ws.week_start AND w.status IN ('PENDING','APPROVED'))
+ ORDER BY ws.week_start DESC,c.name LIMIT 61`,[sid,scope.restricted?scope.contractor_id||-1:null]);
+ const items=[];for(const r of rows.slice(0,60)){
+  const week=isoDate(r.week_start),fp=await companyRiskFingerprint(pool,sid,week,r.contractor_id),managers=await companyManagers(pool,sid,r.contractor_id);
+  const {risk_hash,...safe}=r;items.push({...safe,week_start:week,is_current:fp.count>0&&risk_hash===fp.hash,risk_count:fp.count,managers:managers.map(m=>m.name)});
+ }
+ res.json({items,more:rows.length>60});
 }catch(e){next(e)}});
 app.post('/api/v16/contractor/decision',auth,async(req,res,next)=>{try{
  const sid=Number(req.body.site_id),week=String(req.body.week_start||''),cid=Number(req.body.contractor_id);
@@ -655,13 +680,14 @@ app.post('/api/v16/contractor/decision',auth,async(req,res,next)=>{try{
  if(!validMonday(week)||!Number.isSafeInteger(cid)||!['APPROVE','REJECT'].includes(action)||action==='REJECT'&&!comment)
   return res.status(400).json({error:'주차·업체·승인/반려 및 반려 사유를 확인하세요.'});
  const scope=await companyScope(req,sid),role=await siteRole(req,sid);
- if(!scope.allowed||role!=='CONTRACTOR_MANAGER'||scope.contractor_id!==cid)
+ if(!scope.allowed||role!=='CONTRACTOR_MANAGER'||Number(scope.contractor_id)!==cid)
   return res.status(403).json({error:'해당 협력사의 지정 관리자만 1차 결재할 수 있습니다.'});
  const client=await pool.connect();try{
   await client.query('BEGIN');
   await client.query('SELECT pg_advisory_xact_lock($1,0)',[sid]);
   await client.query('SELECT pg_advisory_xact_lock($1,$2)',[sid,Number(week.replace(/-/g,''))]);
   if(await companyIsLocked(client,sid,week)){await client.query('ROLLBACK');return res.status(409).json({error:'이미 원청에 통합 상신된 주차입니다.'})}
+  if(!(await companyManagers(client,sid,cid)).some(m=>Number(m.id)===Number(req.session.userId))){await client.query('ROLLBACK');return res.status(403).json({error:'현재 활성 협력사 관리자만 결재할 수 있습니다.'})}
   const submission=(await client.query(`SELECT * FROM weekly_contractor_submissions WHERE site_id=$1 AND week_start=$2 AND contractor_id=$3 FOR UPDATE`,[sid,week,cid])).rows[0];
   if(!submission||submission.status!=='SUBMITTED'){await client.query('ROLLBACK');return res.status(409).json({error:'결재 대기 중인 업체 제출 기록이 없습니다.'})}
   const fingerprint=await companyRiskFingerprint(client,sid,week,cid);
@@ -1902,6 +1928,6 @@ app.use("/api/v21",(req,res,next)=>{res.set("Cache-Control","private, no-store")
 v21Board.register({app,auth,q,one,pool,user,siteRole,companyScope});
 
 // 배포 파일 확인용 읽기 전용 엔드포인트. 로그인·DB·R2 설정을 공개하지 않는다.
-app.get('/api/version',(req,res)=>res.set('Cache-Control','no-store').json({version:'24.0.0',release:'2026-11-27',ui:'field-workspace-v24'}));
+app.get('/api/version',(req,res)=>res.set('Cache-Control','no-store').json({version:'26.0.0',release:'2026-11-27',ui:'responsive-layout-v26'}));
 app.use((req,res)=>{if(req.method==="GET")res.sendFile(path.join(__dirname,"public","index.html"));else res.status(404).json({error:"요청을 찾을 수 없습니다."})});
 init().then(()=>app.listen(PORT,"0.0.0.0",()=>console.log(`Safety app running on ${PORT}`))).catch(e=>{console.error(e);process.exit(1)});

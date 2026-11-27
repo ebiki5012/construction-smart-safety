@@ -18,10 +18,10 @@
   const state={site:null,week:null,queue:null,config:null,request:0,detailRequest:0};
   const notify=msg=>typeof toast==='function'?toast(msg):alert(msg);
   const companyStatus=c=>{
-    if(c.status==='APPROVED'&&c.is_current)return {text:'1차 승인 완료',kind:'done'};
+    if(c.status==='APPROVED'&&c.is_current)return {text:'1차 승인 완료 · 원청 취합 대기',kind:'done'};
     if(c.status==='APPROVED'&&!c.is_current)return {text:'승인 후 내용 변경 · 재제출 필요',kind:'stale'};
     if(c.status==='SUBMITTED'&&!c.is_current)return {text:'제출 후 내용 변경 · 재제출 필요',kind:'stale'};
-    if(c.status==='SUBMITTED')return {text:'협력사 관리자 결재 대기',kind:'wait'};
+    if(c.status==='SUBMITTED')return {text:c.managers?.length?'협력사 관리자 결재 대기':'결재 중단 · 관리자 미지정',kind:c.managers?.length?'wait':'stale'};
     if(c.status==='REJECTED')return {text:'반려 · 수정 후 재제출',kind:'reject'};
     return {text:'작성 후 제출 필요',kind:'empty'};
   };
@@ -51,11 +51,11 @@
     const locked=!!queue?.locked;
     host.innerHTML=`<div class="v16-card-heading"><div><span class="v16-eyebrow">STEP 01 · CONTRACTOR</span><h3>협력사별 1차 결재 <span class="v16-count ${approved===companies.length?'all-done':'not-done'}">${approved} / ${companies.length} 승인</span></h3><p>${locked?'통합 상신된 주차':approved===companies.length?'협력사 승인 요건 충족 · 원청 상신 조건 확인':'미승인 업체 확인 후 통합 상신'}</p></div><button type="button" class="v16-refresh" onclick="v16Refresh()">↻ 새로고침</button></div>
     ${companies.length?`<div class="v23-queue-progress" role="progressbar" aria-label="협력사 승인" aria-valuenow="${approved}" aria-valuemax="${companies.length}"><i style="width:${Math.round(approved/companies.length*100)}%"></i></div><div class="v16-company-list">${companies.map(c=>{
-      const status=companyStatus(c),managers=c.managers?.length?c.managers.join(', '):'관리자 미지정';
-      const canApprove=!!c.can_approve,canSubmit=!!c.can_submit;
-      return `<article class="v16-company-row v23-company-${status.kind}"><div class="v16-company-main"><strong>${esc(c.name)} <span class="v23-count-small">${Number(c.risk_count)||0}건</span></strong><small>제출 ${esc(c.submitted_by_name||'미제출')} ${c.submitted_at?`· ${clock(c.submitted_at)}`:''}</small><small>${status.kind==='done'?'승인자':status.kind==='stale'?'이전 결재자':'담당 관리자'} ${esc(c.approved_by_name||managers)} ${c.approved_at?`· ${clock(c.approved_at)}`:''}</small>${c.status==='REJECTED'&&c.decision_comment?`<small class="v16-reason">반려: ${esc(c.decision_comment)}</small>`:''}</div><div class="v16-company-right"><span class="v16-pill ${status.kind}">${status.text}</span><div class="v16-inline-actions">${canSubmit&&status.kind!=='done'?`<button type="button" onclick="v16SubmitCompany(${Number(c.id)})">${c.status?'다시 제출':'작성 완료 제출'}</button>`:''}${canApprove?`<button type="button" class="v16-accept" onclick="v16DecideCompany(${Number(c.id)},'APPROVE')">1차 승인</button><button type="button" class="v16-deny" onclick="v16DecideCompany(${Number(c.id)},'REJECT')">반려</button>`:''}</div></div></article>`;
+      const status=companyStatus(c);if(locked&&status.kind==='done')status.text='1차 승인 완료';const managers=c.managers?.length?c.managers.join(', '):'관리자 미지정';
+      const canApprove=!!c.can_approve,canSubmit=!!c.can_submit;const missing=!c.managers?.length&&status.kind!=='done';
+      return `<article class="v16-company-row v23-company-${status.kind}"><div class="v16-company-main"><strong>${esc(c.name)} <span class="v23-count-small">${Number(c.risk_count)||0}건</span></strong><small>제출 ${esc(c.submitted_by_name||'미제출')} ${c.submitted_at?`· ${clock(c.submitted_at)}`:''}</small><small>${status.kind==='done'?'승인자':status.kind==='stale'?'이전 결재자':'담당 관리자'} ${esc(c.approved_by_name||managers)} ${c.approved_at?`· ${clock(c.approved_at)}`:''}</small>${missing?`<small class="v16-reason">현장관리자에게 이 업체의 협력사 관리자 지정을 요청하세요. 기존 제출 기록은 유지됩니다.</small>${['ADMIN','MANAGER'].includes(role())?'<button type="button" class="v16-refresh" onclick="show(&quot;companies&quot;)">현장 사용자 관리 →</button>':''}`:''}${c.status==='REJECTED'&&c.decision_comment?`<small class="v16-reason">반려: ${esc(c.decision_comment)}</small>`:''}</div><div class="v16-company-right"><span class="v16-pill ${status.kind}">${status.text}</span><div class="v16-inline-actions">${canSubmit&&status.kind!=='done'&&status.kind!=='wait'?`<button type="button" onclick="v16SubmitCompany(${Number(c.id)})">${c.status?'다시 제출':'작성 완료 제출'}</button>`:''}${canApprove?`<button type="button" class="v16-accept" onclick="v16DecideCompany(${Number(c.id)},'APPROVE')">1차 승인</button><button type="button" class="v16-deny" onclick="v16DecideCompany(${Number(c.id)},'REJECT')">반려</button>`:''}</div></div></article>`;
     }).join('')}</div>`:'<div class="v16-empty">이 주차에 작성된 협력사 위험요인이 없습니다. 먼저 위험요인을 작성해 주세요.</div>'}
-    ${locked?'<p class="v16-locked-note">원청에 상신된 주차입니다. 협력사 제출·1차 결재는 잠겨 있습니다.</p>':''}
+    ${!locked&&companies.length&&approved===companies.length?`<p class="v25-next">${['ADMIN','MANAGER','SAFETY_MANAGER'].includes(role())?'모든 업체 1차 승인 완료. 아래 통합 상신을 진행하면 지정된 원청 결재자에게 전달됩니다.':'1차 승인 완료. 원청 담당자가 주간 평가서를 취합·상신할 차례입니다.'}</p>`:''}${locked?'<p class="v16-locked-note">원청에 상신된 주차입니다. 협력사 제출·1차 결재는 잠겨 있습니다.</p>':''}
     <details class="v16-history-toggle" ontoggle="if(this.open)v16LoadCompanyEvents()"><summary>협력사 제출·승인·반려 이력 보기</summary><div id="v16CompanyEvents">열면 이력을 불러옵니다.</div></details>`;
     const summary=byId('v8ReadyStatus');if(summary){summary.textContent=`협력사 1차 승인 ${approved}/${companies.length}개 업체 · ${approved===companies.length?'원청 통합 상신 가능 (결재선 설정 필요)':'미승인 업체 확인 필요'}`;}
     const submit=byId('v7SubmitWeekly');if(submit){submit.disabled=companies.length>0&&approved!==companies.length;submit.title=submit.disabled?'협력사 1차 승인 완료 후 상신할 수 있습니다.':'';}
@@ -69,7 +69,7 @@
         safeApi(`/api/v16/contractor-approvals?site_id=${encodeURIComponent(site)}&week_start=${encodeURIComponent(week)}`)
       ]);
       if(token!==state.request||currentSite()!==site||currentWeek()!==week)return;
-      state.config=config;state.queue=queue;configView(config);queueView(queue);
+      state.config=config;state.queue=queue;configView(config);queueView(queue);window.v25QueueUpdated?.(queue,config);
     }catch(e){if(token!==state.request)return;const host=byId('v16CompanyQueue');if(host)host.innerHTML=`<div class="v16-empty">승인 현황을 불러오지 못했습니다: ${esc(e.message)} <button type="button" onclick="v16Refresh()">다시 시도</button></div>`;}
   }
   async function saveApprovers(){
@@ -83,7 +83,7 @@
   async function submitCompany(id){
     const c=state.queue?.companies?.find(x=>Number(x.id)===Number(id));if(!c||!c.can_submit)return notify('이 업체의 제출 권한이 없습니다.');
     if(!confirm(`${c.name} · ${currentWeek()} 주간 위험성평가 ${c.risk_count}건을 협력사 관리자에게 제출할까요?`))return;
-    try{await safeApi('/api/v8/weekly/ready',{method:'POST',body:JSON.stringify({site_id:Number(currentSite()),week_start:currentWeek(),contractor_id:id})});notify('협력사 관리자에게 1차 결재를 요청했습니다.');await refresh();}
+    try{await safeApi('/api/v8/weekly/ready',{method:'POST',body:JSON.stringify({site_id:Number(currentSite()),week_start:currentWeek(),contractor_id:id})});notify('1차 결재 요청 완료 · '+(c.managers||[]).join(', ')+' 결재 대기');await refresh();window.v25ReloadInbox?.();}
     catch(e){notify(e.message);await refresh();}
   }
   async function decideCompany(id,action){
@@ -91,7 +91,7 @@
     let comment='';
     if(action==='REJECT'){const reason=prompt(`${c.name} 반려 사유를 입력하세요.`);if(reason===null)return;comment=reason.trim();if(!comment)return notify('반려 사유를 입력해야 합니다.');}
     else if(!confirm(`${c.name} 위험요인 ${c.risk_count}건을 협력사 관리자로서 1차 승인할까요?`))return;
-    try{await safeApi('/api/v16/contractor/decision',{method:'POST',body:JSON.stringify({site_id:Number(currentSite()),week_start:currentWeek(),contractor_id:id,action,comment})});notify(action==='APPROVE'?'협력사 1차 승인 완료':'협력사 위험성평가 반려 완료');await refresh();}
+    try{await safeApi('/api/v16/contractor/decision',{method:'POST',body:JSON.stringify({site_id:Number(currentSite()),week_start:currentWeek(),contractor_id:id,action,comment})});notify(action==='APPROVE'?'1차 승인 완료 · 원청 취합 대상에 반영되었습니다.':'협력사 위험성평가 반려 완료');await refresh();window.v25ReloadInbox?.();}
     catch(e){notify(e.message);await refresh();}
   }
   async function loadCompanyEvents(){

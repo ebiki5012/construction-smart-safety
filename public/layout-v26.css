@@ -1,0 +1,26 @@
+/* Final layout layer: keep site labels and metric columns independent. */
+#v24Dashboard .v24-site{display:grid!important;grid-template-columns:minmax(0,1fr) minmax(240px,auto) 18px;gap:12px;align-items:center;text-align:left;min-width:0;white-space:normal!important;padding:14px 4px!important}
+#v24Dashboard .v24-site-counts{display:grid!important;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;min-width:0;align-items:center}
+#v24Dashboard .v24-site-counts>span{display:flex;flex-direction:column;align-items:center;gap:4px;white-space:nowrap!important;word-break:keep-all!important;overflow-wrap:normal!important;line-height:1.4;font-size:12px;padding:7px 4px;background:#f3f6fa;border-radius:7px}
+#v24Dashboard .v24-site-counts b{margin:0;font-size:17px;line-height:1.2;font-variant-numeric:tabular-nums}
+#v24Dashboard .v24-site>svg{order:0;justify-self:end}
+#v24Dashboard .v24-site strong{word-break:keep-all;overflow-wrap:anywhere}
+@media(max-width:900px){
+ #v24Dashboard .v24-site{grid-template-columns:minmax(0,1fr) 18px;gap:9px;padding:12px 0!important;align-items:start}
+ #v24Dashboard .v24-site>div:first-child{grid-column:1;grid-row:1}
+ #v24Dashboard .v24-site>svg{grid-column:2;grid-row:1;align-self:center}
+ #v24Dashboard .v24-site-counts{grid-column:1/-1;grid-row:2;width:100%;gap:6px}
+ #v24Dashboard .v24-site-counts>span{font-size:11px;padding:7px 2px}
+ #v24Dashboard .v24-site strong{font-size:14px;line-height:1.45}
+ #v24Dashboard .v24-site small{font-size:12px}
+ #v24Dashboard .v24-heading{flex-wrap:wrap;align-items:baseline}
+ #v24Dashboard .v24-welcome>div{min-width:0;overflow-wrap:anywhere}
+ #v24Dashboard .v24-refresh{flex:none}
+ .app main.main .page,.app main.main .card,.app main.main .form,.app main.main .table{min-width:0;max-width:100%;box-sizing:border-box}
+ .app main.main .table{overflow-x:auto}
+ .app main.main .form input:not([type=checkbox]):not([type=radio]),.app main.main .form select,.app main.main .form textarea{min-width:0;max-width:100%;box-sizing:border-box}
+ .app main.main img{max-width:100%;object-fit:contain}
+ .app main.main .v25-inbox-row{flex-wrap:wrap}
+ .app main.main .v25-inbox-row span:first-child{flex:1 1 160px}
+ .app main.main .v25-inbox-row span:last-child{white-space:normal;max-width:100%}
+}

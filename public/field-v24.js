@@ -24,7 +24,7 @@ window.v24RenderDashboard=(d,all)=>{
  if(enabled('board'))quick.push(button('board','공지·안전자료','현장 공지 및 공유자료','board'));
  if(approver&&enabled('weekly'))tasks.push(task('mine','내 주간 결재 대기',d.my_weekly_pending,'지정된 원청 결재자 기준'));
  if(prime&&enabled('weekly'))tasks.push(task('weekly','전체 주간 결재 대기',d.weekly_pending,'현장 통합 평가서'));
- if(enabled('weekly')&&role!=='SITE_DIRECTOR')tasks.push(task('company','이번 주 업체 제출',d.company_submitted,'1차 승인 현황에서 확인'));
+ if(enabled('weekly')&&role!=='SITE_DIRECTOR')tasks.push(task('company',role==='CONTRACTOR_MANAGER'?'협력사 1차 결재함':prime?'협력사 접수·취합함':'내 업체 제출 현황',prime?Number(d.company_submitted||0)+Number(d.company_approved_open||0):d.company_submitted,prime?'1차 대기 '+Number(d.company_submitted||0)+'건 · 승인 기록 '+Number(d.company_approved_open||0)+'건 (변경 여부 확인)':'미통합 제출 기록 · 지난 주차 포함'));
  if(manager&&enabled('tbm'))tasks.push(task('tbm-approval','TBM 결재 대기',d.tbm_review_pending,'원청 접수 문서'));
  if(enabled('action')){tasks.push(task('action-open','조치기한 초과',d.overdue_actions,'미완료 지적사항'));if(manager)tasks.push(task('action-verify','완료 확인 대기',d.verification_pending,'원청 확인 필요'));}
  if(prime&&enabled('weekly'))tasks.push(task('lookup','이번 주 미등록 업체',d.week_unregistered,'등록 여부 기준 · 작업 여부 별도 확인'));

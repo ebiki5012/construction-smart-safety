@@ -257,6 +257,7 @@
     };
   }
 
+  window.v25PreviewUpdated=()=>{if(state.selectedId===null&&state.site===String(sid))renderFocus(null,typeof v7Preview!=='undefined'?v7Preview:[]);};
   window.v12OpenWorkspace=openWorkspace;
   window.v12ShowMode=showMode;
   window.v12SelectCurrentWeek=selectCurrentWeek;
