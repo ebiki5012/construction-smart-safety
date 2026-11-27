@@ -28,6 +28,7 @@ d={
 with sync_playwright() as pw:
  browser=pw.chromium.launch(executable_path=os.environ.get('CHROMIUM_PATH','/usr/bin/chromium'),headless=True,args=['--no-sandbox','--disable-dev-shm-usage'])
  page=browser.new_page(viewport={'width':390,'height':844},is_mobile=True,has_touch=True,device_scale_factor=1)
+ page.set_default_timeout(5000)
  page.on('pageerror',lambda e:errors.append(str(e)));page.on('dialog',lambda d:d.accept())
  page.clock.set_fixed_time(datetime(2026,11,26,4,0,tzinfo=timezone.utc))
  html=(root/'index.html').read_text()
@@ -58,7 +59,9 @@ with sync_playwright() as pw:
  page.locator('#riskContractor').select_option('2');page.locator('button[onclick="saveRisk()"]').click();page.wait_for_timeout(150);assert not any(p=='/api/risks' for p,v in page.evaluate('window.__writes'))
  page.locator('#rf').select_option('2');page.locator('#rs').select_option('3');page.locator('button[onclick="saveRisk()"]').click();page.wait_for_timeout(250);assert any(p=='/api/risks' and json.loads(v)['frequency']=='2' for p,v in page.evaluate('window.__writes'))
  page.evaluate('toTpl(11)');page.wait_for_selector('#v22EditForm');page.locator('#v22EditSave').click();page.wait_for_timeout(250);assert any(p=='/api/templates' and json.loads(v).get('source_risk_id')==11 for p,v in page.evaluate('window.__writes'))
- page.locator('.v15-template-launch').click();page.wait_for_timeout(300);page.locator('[data-v22-source=examples]').click();page.locator('[data-v22-category=frame]').click()
+ page.locator('.v15-template-launch').click();page.wait_for_timeout(300);page.locator('[data-v22-source=examples]').click();
+ if not page.locator('[data-v22-category=frame]').is_visible(): page.locator('#v22GroupLabel').click()
+ page.locator('[data-v22-category=frame]').click()
  for width in [360,390,430,1280]:
   page.set_viewport_size({'width':width,'height':850});page.wait_for_timeout(150);nooverflow()
  page.locator('#v12PanelTemplate').scroll_into_view_if_needed();page.screenshot(path=str(out/'v22_desktop_catalog.png'))

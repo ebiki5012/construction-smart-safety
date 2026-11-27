@@ -7,7 +7,7 @@ new vm.Script(js,{filename:'approval-v16.js'});
 new vm.Script(html.match(/<script>([\s\S]*?)<\/script>/)[1],{filename:'index-inline.js'});
 assert(html.includes('/approval-v16.js?v=23')&&html.includes('/approval-v16.css?v=23'));
 assert(html.includes('V18 · 현장별 결재선 관리'));
-assert(server.includes("version:'23.0.0'")&&server.includes("ui:'category-approval-v23'"));
+assert(server.includes("version:'24.0.0'")&&server.includes("ui:'field-workspace-v24'"));
 for(const role of ['CONTRACTOR_MANAGER','SAFETY_MANAGER','SITE_DIRECTOR'])assert(html.includes(`value="${role}"`),'site role must be selectable: '+role);
 for(const route of ['/api/v16/approvers','/api/v16/contractor-approvals','/api/v16/contractor/decision','/api/v16/weekly/:id/stages','/api/v16/contractor-events'])assert(server.includes(route),'missing '+route);
 for(const table of ['weekly_stage_approval_events','weekly_contractor_approval_events','weekly_approval_settings'])assert(server.includes('CREATE TABLE IF NOT EXISTS '+table),'missing table '+table);

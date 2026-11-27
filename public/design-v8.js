@@ -13,6 +13,7 @@
   let selectedTbm = null;
   let cleanupBusy = false;
   const canEdit = () => typeof me !== 'undefined' && me?.role === 'ADMIN';
+  const draftOwner=(type,r)=>['risk','tbm'].includes(type)&&Number(type==='risk'?r.author_id:r.created_by)===Number(me?.id)&&!['SUBMITTED','APPROVED'].includes(r.approval_status);
   const buttons = (type, r) => {
     const id = Number(r.id);
     if (!Number.isSafeInteger(id) || id <= 0) return '';
@@ -23,7 +24,8 @@
       html += `<button type="button" onclick="reuseTbm(${id})" class="v8-action-soft">다시 작성</button>`;
     }
     html += `<button type="button" class="v8-action-soft" onclick="openPhotos('${type}',${id})">사진 보기·첨부</button>`;
-    if (canEdit()) html += `<button type="button" class="v8-action-soft" onclick="editRecord('${type}',${id})">기록 수정</button><button type="button" class="v8-action-alert" onclick="removeRecord('${type}',${id})">기록 정리</button>`;
+    if (canEdit()||draftOwner(type,r)) html += `<button type="button" class="v8-action-soft" onclick="editRecord('${type}',${id})">기록 수정</button>`;
+    if(canEdit()) html += `<button type="button" class="v8-action-alert" onclick="removeRecord('${type}',${id})">기록 정리</button>`;
     return html + '</div>';
   };
   const info = data => '<div class="v8-detail-info">' + data.map(([key,value]) => `<div><small>${safe(key)}</small><b>${safe(value || '-')}</b></div>`).join('') + '</div>';
@@ -144,11 +146,12 @@
     custom:[['record_date','기록일','date']]
   };
   window.editRecord = async function editRecord(type,id) {
-    if (!canEdit()) return toast('최고관리자만 기록을 수정할 수 있습니다.');
     if (!fieldDefinitions[type]) return;
     let r;
     try{r=await findRecord(type,id)}catch(e){return toast(e.message)}
     if(!r)return toast('기록을 찾지 못했습니다.');
+    if(!canEdit()&&!draftOwner(type,r))return toast('미확정 기록의 원래 작성자만 수정할 수 있습니다.');
+    const editSite=String(sid),editUser=String(me?.id);
     const fields=[...fieldDefinitions[type]];
     let customFields=[];
     if(type==='custom'){
@@ -166,13 +169,13 @@
     }).join('');
     const customHTML=customFields.map(f=>`<div class="wide"><label for="v8-custom-${safe(f.name)}">${safe(f.label)}</label><input type="text" id="v8-custom-${safe(f.name)}" data-custom-field="${safe(f.name)}" value="${safe(r.form_data?.[f.name]??'')}"></div>`).join('');
     const {root,close}=dialog('기록 수정',`${label[type]} #${id} · 변경 이력이 자동 저장됩니다.`,
-      `<form id="v8EditForm"><div class="v8-dialog-grid">${inputHTML}${customHTML}</div><div class="v8-form-error" role="alert" id="v8EditError"></div><p class="v8-dialog-note">사진은 ‘사진 보기·첨부’에서 별도로 관리합니다. 승인된 문서의 수정은 서버에서 제한될 수 있습니다.</p></form>`,
+      `<form id="v8EditForm"><div class="v8-dialog-grid">${inputHTML}${customHTML}</div><div class="v8-form-error" role="alert" id="v8EditError"></div><p class="v8-dialog-note">사진은 ‘사진 보기·첨부’에서 별도로 관리합니다. 통합 상신·승인된 기록은 수정할 수 없습니다. 협력사 승인 이후 내용 변경 시 다시 제출하고 승인받아야 합니다.</p></form>`,
       `<button type="button" class="cancel" data-v8-cancel>취소</button><button type="button" id="v8EditConfirm">수정 내용 저장</button>`);
     const form=root.querySelector('#v8EditForm'),save=root.querySelector('#v8EditConfirm'),error=root.querySelector('#v8EditError');
     save.addEventListener('click',async()=>{const data=new FormData(form),update={};for(const [name,,kind] of fields){const raw=String(data.get(name)??'').trim();if(kind==='number'&&raw&&(!Number.isInteger(Number(raw))||Number(raw)<(name==='frequency'||name==='severity'?1:0)||((name==='frequency'||name==='severity')&&Number(raw)>3))){error.textContent='빈도·강도는 1~3, 인원은 0 이상의 숫자로 입력하세요.';return}update[name]=raw||null}
       if(type==='risk'&&update.period_start&&update.period_end&&update.period_start>update.period_end){error.textContent='적용 시작일이 종료일보다 늦을 수 없습니다.';return}
       if(type==='custom'){const values={...(r.form_data||{})};form.querySelectorAll('[data-custom-field]').forEach(el=>{values[el.dataset.customField]=el.value});update.form_data=values}
-      save.disabled=true;save.textContent='저장 중…';error.textContent='';try{await api(`/api/records/${type}/${Number(id)}`,{method:'PATCH',body:JSON.stringify(update)});close();toast('수정 완료 · 변경 이력이 저장됐습니다.');refreshRecordPage(type);if(type==='risk')loadV8RiskWeek().catch(()=>{})}catch(e){error.textContent=e.message;save.disabled=false;save.textContent='수정 내용 저장'}
+      save.disabled=true;save.textContent='저장 중…';error.textContent='';try{if(String(sid)!==editSite||String(me?.id)!==editUser)throw Error('현장 또는 사용자 변경 후 다시 조회하세요.');await api(`${canEdit()?'/api/records':'/api/v24/drafts'}/${type}/${Number(id)}`,{method:'PATCH',body:JSON.stringify(update)});close();toast('수정 완료 · 변경 이력이 저장됐습니다.');refreshRecordPage(type);if(type==='risk')loadV8RiskWeek().catch(()=>{})}catch(e){error.textContent=e.message;save.disabled=false;save.textContent='수정 내용 저장'}
     });
     form.addEventListener('submit',e=>{e.preventDefault();save.click()});
     const first=form.querySelector('input,textarea,select');if(first)first.focus();
