@@ -16,7 +16,7 @@ function renderUsers(){
   if(filter==='active'&&(!u.active||u.archived_at))return false;
   if(filter==='inactive'&&(u.active||u.archived_at))return false;
   if(filter==='archived'&&!u.archived_at)return false;
-  const values=[u.name,u.email,u.username||'',...(u.sites||[]).map(s=>s.site_name)];
+  const values=[u.name,u.email,u.username||'',...(u.sites||[]).map(s=>[s.site_name,s.contractor_name].join(" "))];
   return !term||values.join(' ').toLocaleLowerCase('ko').includes(term);
  });
  const host=$('userTable');if(!host)return;
@@ -25,9 +25,9 @@ function renderUsers(){
   const status=u.archived_at?'보관됨':u.active?'사용 중':'사용 중지';
   const statusClass=u.archived_at?'archived':u.active?'active':'inactive';
   const initial=esc(String(u.name||'?').trim().slice(0,1));
-  const sites=(u.sites||[]).slice(0,3).map(s=>`<span class="v15-site-pill">${esc(s.site_name)} <small>${esc(v15RoleNames[s.site_role]||s.site_role)}</small></span>`).join('');
+  const sites=(u.sites||[]).slice(0,3).map(s=>`<span class="v15-site-pill">${esc(s.site_name)} · ${esc(s.contractor_name||(["USER","CONTRACTOR_MANAGER"].includes(s.site_role)?"업체 미지정":"원청"))} <small>${esc(v15RoleNames[s.site_role]||s.site_role)}</small></span>`).join('');
   const more=(u.sites||[]).length>3?`<span class="v15-site-pill">+${u.sites.length-3}곳</span>`:'';
-  return `<article class="v15-user-row" data-user-id="${Number(u.id)}"><div class="v15-user-avatar" aria-hidden="true">${initial}</div><div class="v15-user-info"><div class="v15-user-name"><strong>${esc(u.name)}</strong><span class="v15-user-state ${statusClass}">${status}</span><span class="v15-user-role">${esc(v15RoleNames[u.role]||u.role)}</span></div><div class="v15-user-login">${esc(u.username||'아이디 미설정')} <span>·</span> ${esc(u.email)}</div><div class="v15-user-sites">${sites}${more||(!sites?'<span class="v15-site-empty">배정 현장 없음</span>':'')}</div></div><div class="v15-user-actions"><button type="button" onclick="openUserModal(${Number(u.id)})">${u.archived_at?'상세·복구':'정보·권한 수정'}</button>${u.archived_at?'':`<button type="button" class="v15-user-archive-shortcut" onclick="v15OpenArchive(${Number(u.id)})">계정 보관</button>`}</div></article>`;
+  return `<article class="v15-user-row" data-user-id="${Number(u.id)}"><div class="v15-user-avatar" aria-hidden="true">${initial}</div><div class="v15-user-info"><div class="v15-user-name"><strong>${esc(u.name)}</strong><span class="v15-user-state ${statusClass}">${status}</span><span class="v15-user-role">${esc(v15RoleNames[u.role]||u.role)}</span></div><div class="v15-user-login">${esc(u.username||'아이디 미설정')} <span>·</span> ${esc(String(u.email||'').endsWith('@account.invalid')?'아이디 로그인':u.email)}</div><div class="v15-user-sites">${sites}${more||(!sites?'<span class="v15-site-empty">배정 현장 없음</span>':'')}</div></div><div class="v15-user-actions"><button type="button" onclick="openUserModal(${Number(u.id)})">${u.archived_at?'상세·복구':'정보·권한 수정'}</button>${u.archived_at?'':`<button type="button" class="v15-user-archive-shortcut" onclick="v15OpenArchive(${Number(u.id)})">계정 보관</button>`}</div></article>`;
  }).join('')}</div>`:'<div class="v15-empty-state">해당 조건의 사용자가 없습니다. 검색어 또는 계정 상태를 변경해 보세요.</div>');
 }
 function drawUserModal(){
@@ -38,12 +38,13 @@ function drawUserModal(){
  $('editName').value=u.name||'';$('editEmail').value=u.email||'';$('editUsername').value=u.username||'';$('editRole').value=u.role;
  const assign=$('assignSite');assign.innerHTML=sites.map(s=>`<option value="${Number(s.id)}">${esc(s.name)}</option>`).join('');
  const assignments=(u.sites||[]);
- $('assignedSites').innerHTML=assignments.length?assignments.map(s=>`<div class="v15-assigned-row"><div><strong>${esc(s.site_name)}</strong><small>${esc(v15RoleNames[s.site_role]||s.site_role)}</small></div><button type="button" ${archived?'disabled':''} onclick="unassignUserSite(${Number(s.site_id)})">배정 해제</button></div>`).join(''):'<div class="v15-assigned-empty">현재 배정된 현장이 없습니다.</div>';
+ $('assignedSites').innerHTML=assignments.length?assignments.map(s=>`<div class="v15-assigned-row"><div><strong>${esc(s.site_name)}</strong><small>${esc(v15RoleNames[s.site_role]||s.site_role)} · ${esc(s.contractor_name||(["USER","CONTRACTOR_MANAGER"].includes(s.site_role)?"업체 미지정":"원청"))}</small></div><div class="v21-assignment-actions"><button type="button" ${archived?'disabled':''} onclick="v21EditAssignment(${Number(s.site_id)})">소속·권한 수정</button><button type="button" ${archived?'disabled':''} onclick="unassignUserSite(${Number(s.site_id)})">배정 해제</button></div></div>`).join(''):'<div class="v15-assigned-empty">현재 배정된 현장이 없습니다.</div>';
  const status=$('statusBtn');status.textContent=u.active?'계정 사용 중지':'계정 활성화';status.disabled=archived;status.classList.toggle('v15-activate',!u.active);
  $('v15RestoreUserBtn').classList.toggle('hidden',!archived);
  $('v15ArchiveBox').classList.toggle('hidden',archived);
  $('v15ArchivedInfo').classList.toggle('hidden',!archived);
  if(archived)$('v15ArchivedInfo').innerHTML=`<strong>보관일</strong> ${esc(v15Date(u.archived_at))}<div><strong>사유</strong> ${esc(u.archive_reason||'-')}</div><p>복구하면 사용 중지 상태가 됩니다. 다시 로그인하도록 하려면 계정 활성화를 선택하세요.</p>`;
+ window.v21SyncCompany?.("assign");
  for(const id of ['editName','editEmail','editUsername','editRole','assignSite','assignRole','resetPw','v15SaveUserBtn','v15AssignUserBtn','v15ResetPwBtn','v15ArchiveReason','v15ArchiveUserBtn'])$(id).disabled=archived;
 }
 function v15OpenArchive(id){openUserModal(id);setTimeout(()=>{const node=$('v15ArchiveBox');if(node&&!node.classList.contains('hidden'))node.scrollIntoView({behavior:'smooth',block:'center'});},40)}

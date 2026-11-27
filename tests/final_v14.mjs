@@ -8,7 +8,7 @@ const css=read('public/final-v14.css');
 const server=read('server.js');
 assert(html.includes('/final-v14.css?v=20261123-01'),'final UI asset must be versioned');
 assert(html.includes('V18 · 현장별 결재선 관리'),'release label must be visible');
-assert(server.includes("version:'20.0.0'")&&server.includes("ui:'mobile-task-workspace-v20'"),'version endpoint must identify final release');
+assert(server.includes("version:'22.0.0'")&&server.includes("ui:'template-catalog-v22'"),'version endpoint must identify final release');
 assert(html.includes('id="v14ActionOverview"'),'action overview counts missing');
 assert(css.includes('v14-action-card')&&css.includes('@media(max-width:650px)'),'responsive action cards missing');
 assert(!html.includes('class="section v13-action-photo-help"'),'duplicate photo instructions should be removed');

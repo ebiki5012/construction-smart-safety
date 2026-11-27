@@ -17,7 +17,7 @@ assert(html.includes("$('v7SubmitWeekly').disabled=locked")&&html.includes("$('v
 assert(html.includes('이미 처리되었거나 현재 결재 대기 상태가 아닙니다'),'stale approval must trigger reload');
 assert(server.includes('const printSeal=')&&server.includes('approval-seal')&&server.includes('approved_at'),'print report needs status stamp');
 assert(css.includes('.v11-stamp.document')&&css.includes('@media(max-width:650px)'),'desktop and mobile stamp styles required');
-assert(server.includes("version:'20.0.0'"),'version endpoint must identify the deployed update');
+assert(server.includes("version:'22.0.0'"),'version endpoint must identify the deployed update');
 
 // Rendering a stamp must never elevate a pending document to approved or show a stale approval action.
 const ui={getSelectedWeekly(){return 9},showWeeklyDetails(){},filterWeekly(){},clearWeekly(){}};

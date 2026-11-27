@@ -14,6 +14,8 @@ const r2=()=>new S3Client({region:"auto",endpoint:`https://${process.env.R2_ACCO
 const bucket=()=>process.env.R2_BUCKET;
 
 
+const v21Board=require("./v21-board");
+const v22Catalog=require("./public/template-catalog-v22.js");
 const app=express();
 app.set("trust proxy",1);
 const PORT=process.env.PORT||3000;
@@ -84,6 +86,12 @@ async function init(){
    created_by INT REFERENCES users(id),created_at TIMESTAMPTZ DEFAULT now()
  );
  `);
+ await pool.query(`ALTER TABLE templates ADD COLUMN IF NOT EXISTS category TEXT;
+ ALTER TABLE templates ADD COLUMN IF NOT EXISTS hazard_type TEXT;
+ ALTER TABLE templates ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ;
+ ALTER TABLE templates ADD COLUMN IF NOT EXISTS contractor_id INT;
+ ALTER TABLE templates ADD COLUMN IF NOT EXISTS source_risk_id INT;
+ CREATE INDEX IF NOT EXISTS templates_v22_site_company ON templates(site_id,contractor_id,archived_at);`);
  await pool.query(`CREATE TABLE IF NOT EXISTS weekly_risk_reviews(
  id BIGSERIAL PRIMARY KEY,site_id INT NOT NULL REFERENCES sites(id),week_start DATE NOT NULL,
  meeting_notes TEXT NOT NULL DEFAULT '',status TEXT NOT NULL DEFAULT 'DRAFT',
@@ -303,6 +311,7 @@ async function init(){
    await pool.query("INSERT INTO memberships(user_id,site_id,role) VALUES($1,$2,'ADMIN')",[u.id,s.id]);
    await pool.query("INSERT INTO settings(site_id) VALUES($1)",[s.id]);
  }
+ await pool.query(v21Board.schema);
 }
 async function auth(req,res,next){
  try {
@@ -317,7 +326,7 @@ async function siteRole(req,siteId){
  const u=await user(req);if(!u||!u.active||!Number.isSafeInteger(Number(siteId))||Number(siteId)<1)return null;
  if(u.role==='ADMIN')return 'ADMIN';
  const m=await one('SELECT role FROM memberships WHERE user_id=$1 AND site_id=$2',[u.id,siteId]);
- return m?.role||null;
+ return m?.role==='ADMIN'?null:m?.role||null; // ADMIN is a global role, never inherited from a stale membership.
 }
 async function can(req,siteId,roles=[]){
  const role=await siteRole(req,siteId);
@@ -327,7 +336,7 @@ async function companyScope(req,siteId){
  const role=await siteRole(req,siteId);
  if(!role)return {allowed:false,restricted:true,contractor_id:null};
  if(['ADMIN','MANAGER','SAFETY_MANAGER','SITE_DIRECTOR'].includes(role))return {allowed:true,restricted:false,contractor_id:null};
- const cm=await one('SELECT contractor_id FROM contractor_memberships WHERE user_id=$1 AND site_id=$2',[req.session.userId,siteId]);
+ const cm=await one('SELECT cm.contractor_id FROM contractor_memberships cm JOIN contractors c ON c.id=cm.contractor_id AND c.site_id=cm.site_id AND c.active=true WHERE cm.user_id=$1 AND cm.site_id=$2',[req.session.userId,siteId]);
  return {allowed:true,restricted:true,contractor_id:cm?.contractor_id||null};
 }
 async function customRecordAllowed(req,rec){
@@ -497,7 +506,8 @@ async function companyIsLocked(client,siteId,week){
 // Contractor directory, site-scoped membership and weekly integrated approvals.
 app.get('/api/v6/contractors',auth,async(req,res,next)=>{try{
  const sid=Number(req.query.site_id);if(!(await can(req,sid)))return res.status(403).json({error:'현장 권한 없음'});
- res.json(await q('SELECT id,site_id,name,active FROM contractors WHERE site_id=$1 AND active=true ORDER BY name',[sid]));
+ const scope=await companyScope(req,sid);
+ res.json(await q('SELECT id,site_id,name,active FROM contractors WHERE site_id=$1 AND active=true AND ($2::int IS NULL OR id=$2) ORDER BY name',[sid,scope.restricted?scope.contractor_id||-1:null]));
 }catch(e){next(e)}});
 app.post('/api/v6/contractors',auth,async(req,res,next)=>{try{
  const sid=Number(req.body.site_id),name=String(req.body.name||'').trim();
@@ -707,7 +717,7 @@ app.get('/api/v7/weekly/preview',auth,async(req,res,next)=>{try{
  if(!scope.allowed)return res.status(403).json({error:'현장 접근 권한이 없습니다.'});
  if(!validMonday(start))return res.status(400).json({error:'평가 시작일은 월요일이어야 합니다.'});
  const rows=await q(weeklyRowsSql,[sid,start]);
- res.json(scope.restricted?rows.filter(r=>r.contractor_id===scope.contractor_id):rows);
+ res.json(scope.restricted?rows.filter(r=>!!scope.contractor_id&&Number(r.contractor_id)===scope.contractor_id):rows);
 }catch(e){next(e)}});
 app.post('/api/v7/weekly',auth,async(req,res,next)=>{try{
  const sid=Number(req.body.site_id),start=String(req.body.week_start||''),meeting=String(req.body.meeting_notes||'').slice(0,4000),attendees=String(req.body.attendees||'').slice(0,2000);
@@ -901,6 +911,7 @@ app.get("/api/risks",auth,async(req,res)=>{
 });
 app.post("/api/risks",auth,async(req,res)=>{
  const sid=Number(req.body.site_id);if(!(await can(req,sid)))return res.status(403).json({error:"현장 권한이 없습니다."});
+ if(![1,2,3].includes(Number(req.body.frequency))||![1,2,3].includes(Number(req.body.severity)))return res.status(400).json({error:'빈도와 강도를 각각 선택하세요.'});
  if(req.body.period_start&&req.body.period_end&&req.body.period_start>req.body.period_end)return res.status(400).json({error:"적용 시작일이 종료일보다 늦습니다."});
  const s=await one("SELECT * FROM settings WHERE site_id=$1",[sid])||{low_max:3,medium_max:5};
  if(req.body.contractor_id&&!await one('SELECT id FROM contractors WHERE id=$1 AND site_id=$2 AND active=true',[req.body.contractor_id,sid]))return res.status(400).json({error:'현장 협력업체를 선택하세요'});
@@ -1043,17 +1054,38 @@ app.delete("/api/photos/:id",auth,async(req,res,next)=>{try{
  await logAdmin(req,'photo','TRASH',f.id,{site_id:f.site_id});res.json({ok:true,note:'사진 원본은 R2에 보관되어 복원할 수 있습니다.'});
 }catch(e){next(e)}});
 
+// Standard templates: legacy shared templates remain shared; new copies retain source-company scope.
+function v22TemplateMeta(body){
+ const name=String(body.name||'').trim(),category=String(body.category||''),hazardType=String(body.hazard_type||'');
+ if(!name||name.length>200||!v22Catalog.groups.some(g=>g.id===category)||!v22Catalog.types.includes(hazardType))return null;
+ return {name,category,hazardType};
+}
 app.get("/api/templates",auth,async(req,res)=>{
- const sid=Number(req.query.site_id);if(!(await can(req,sid)))return res.status(403).json({error:"현장 권한이 없습니다."});
- res.json(await q("SELECT * FROM templates WHERE site_id=$1 ORDER BY id DESC",[sid]));
+ const sid=Number(req.query.site_id),scope=await companyScope(req,sid);if(!scope.allowed)return res.status(403).json({error:"현장 권한이 없습니다."});
+ const manager=await can(req,sid,['MANAGER']);
+ res.json(await q(`SELECT t.*,c.name contractor_name FROM templates t LEFT JOIN contractors c ON c.id=t.contractor_id AND c.site_id=t.site_id WHERE t.site_id=$1 AND ($2::int IS NULL OR t.contractor_id IS NULL OR t.contractor_id=$2) AND (t.archived_at IS NULL OR $3::boolean) ORDER BY t.id DESC`,[sid,scope.restricted?scope.contractor_id||-1:null,manager]));
 });
 app.post("/api/templates",auth,async(req,res)=>{
- const sid=Number(req.body.site_id);if(!(await can(req,sid)))return res.status(403).json({error:"현장 권한이 없습니다."});
- const s=await one("SELECT * FROM settings WHERE site_id=$1",[sid])||{low_max:3,medium_max:5},r=riskCalc(req.body.frequency,req.body.severity,s);
- const x=await one(`INSERT INTO templates(site_id,name,area,work,hazard,frequency,severity,score,level,measure)
- VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
- [sid,req.body.name,req.body.area,req.body.work,req.body.hazard,r.frequency,r.severity,r.score,r.level,req.body.measure]);
+ const sid=Number(req.body.site_id),scope=await companyScope(req,sid);if(!scope.allowed)return res.status(403).json({error:"현장 권한이 없습니다."});
+ const meta=v22TemplateMeta(req.body),id=Number(req.body.source_risk_id);if(!meta||!Number.isSafeInteger(id)||id<1)return res.status(400).json({error:'표준평가 이름·공종·위험 유형 및 원본 기록을 확인하세요.'});
+ if(!await recordCompanyAllowed(req,'risk',id,sid))return res.status(404).json({error:'원본 평가를 찾을 수 없습니다.'});
+ const r=await one('SELECT * FROM risks WHERE id=$1 AND site_id=$2 AND deleted_at IS NULL',[id,sid]);if(!r)return res.status(404).json({error:'원본 평가를 찾을 수 없습니다.'});
+ const x=await one(`INSERT INTO templates(site_id,name,area,work,hazard,frequency,severity,score,level,measure,category,hazard_type,contractor_id,source_risk_id)
+ VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,[sid,meta.name,r.area,r.work,r.hazard,r.frequency,r.severity,r.score,r.level,r.measure,meta.category,meta.hazardType,r.contractor_id,id]);
  res.json(x);
+});
+app.patch('/api/templates/:id',auth,async(req,res)=>{
+ const sid=Number(req.body.site_id);if(!await can(req,sid,['MANAGER']))return res.status(403).json({error:'현장관리자만 분류를 변경할 수 있습니다.'});
+ const meta=v22TemplateMeta(req.body);if(!meta)return res.status(400).json({error:'이름·공종·위험 유형을 확인하세요.'});
+ const x=await one('UPDATE templates SET name=$3,category=$4,hazard_type=$5 WHERE id=$1 AND site_id=$2 AND archived_at IS NULL RETURNING *',[req.params.id,sid,meta.name,meta.category,meta.hazardType]);if(!x)return res.status(404).json({error:'표준평가를 찾을 수 없습니다.'});res.json(x);
+});
+app.delete('/api/templates/:id',auth,async(req,res)=>{
+ const sid=Number(req.body.site_id);if(!await can(req,sid,['MANAGER']))return res.status(403).json({error:'현장관리자만 보관할 수 있습니다.'});
+ const x=await one('UPDATE templates SET archived_at=now() WHERE id=$1 AND site_id=$2 AND archived_at IS NULL RETURNING id',[req.params.id,sid]);if(!x)return res.status(404).json({error:'표준평가를 찾을 수 없습니다.'});res.json({ok:true});
+});
+app.post('/api/templates/:id/restore',auth,async(req,res)=>{
+ const sid=Number(req.body.site_id);if(!await can(req,sid,['MANAGER']))return res.status(403).json({error:'현장관리자만 복구할 수 있습니다.'});
+ const x=await one('UPDATE templates SET archived_at=NULL WHERE id=$1 AND site_id=$2 AND archived_at IS NOT NULL RETURNING id',[req.params.id,sid]);if(!x)return res.status(404).json({error:'보관 자료를 찾을 수 없습니다.'});res.json({ok:true});
 });
 
 app.get("/api/actions",auth,async(req,res)=>{
@@ -1124,8 +1156,8 @@ app.patch("/api/sites/:id",auth,async(req,res)=>{
 
 app.get("/api/users",auth,async(req,res)=>{
  const u=await user(req);if(u.role!=="ADMIN")return res.status(403).json({error:"관리자만 볼 수 있습니다."});
- res.json(await q(`SELECT u.id,u.name,u.email,u.username,u.role,u.active,u.archived_at,u.archived_by,u.archive_reason,COALESCE(json_agg(json_build_object('site_id',m.site_id,'site_name',s.name,'site_role',m.role)) FILTER(WHERE m.site_id IS NOT NULL),'[]') sites
- FROM users u LEFT JOIN memberships m ON m.user_id=u.id LEFT JOIN sites s ON s.id=m.site_id GROUP BY u.id ORDER BY u.id DESC`));
+ res.json(await q(`SELECT u.id,u.name,u.email,u.username,u.role,u.active,u.archived_at,u.archived_by,u.archive_reason,COALESCE(json_agg(json_build_object('site_id',m.site_id,'site_name',s.name,'site_role',m.role,'contractor_id',cm.contractor_id,'contractor_name',c.name)) FILTER(WHERE m.site_id IS NOT NULL),'[]') sites
+ FROM users u LEFT JOIN memberships m ON m.user_id=u.id LEFT JOIN sites s ON s.id=m.site_id LEFT JOIN contractor_memberships cm ON cm.user_id=m.user_id AND cm.site_id=m.site_id LEFT JOIN contractors c ON c.id=cm.contractor_id AND c.site_id=m.site_id GROUP BY u.id ORDER BY u.id DESC`));
 });
 const VALID_ROLES=new Set(["ADMIN","MANAGER","USER","CONTRACTOR_MANAGER","SAFETY_MANAGER","SITE_DIRECTOR"]);
 const VALID_GLOBAL_ROLES=new Set(["ADMIN","MANAGER","USER"]);
@@ -1138,8 +1170,8 @@ const adminOnly=async(req,res)=>{const u=await user(req);if(u?.role!=="ADMIN"){r
 const adminCount=async()=>Number((await one("SELECT count(*)::int n FROM users WHERE role='ADMIN' AND active=true")).n);
 app.post("/api/users",auth,async(req,res)=>{
  if(!(await adminOnly(req,res)))return;
- const name=String(req.body.name||"").trim(),email=cleanEmail(req.body.email),username=cleanUsername(req.body.username),password=req.body.password,role=req.body.role||"USER";
- if(!name||name.length>100||!validEmail(email)||!validUsername(username)||!validPassword(password)||!VALID_GLOBAL_ROLES.has(role))return res.status(400).json({error:"이름, 이메일, 권한과 10자 이상 비밀번호를 확인하세요."});
+ const name=String(req.body.name||"").trim(),username=cleanUsername(req.body.username),email=cleanEmail(req.body.email)||(username?`site-${crypto.randomUUID()}@account.invalid`:""),password=req.body.password,role=req.body.role||"USER";
+ if(!name||name.length>100||!validEmail(email)||!validUsername(username)||!validPassword(password)||!VALID_GLOBAL_ROLES.has(role))return res.status(400).json({error:"이름, 이메일 또는 로그인 아이디, 권한과 10자 이상 비밀번호를 확인하세요."});
  const client=await pool.connect();
  try{
   await client.query("BEGIN");
@@ -1151,8 +1183,13 @@ app.post("/api/users",auth,async(req,res)=>{
    const site=(await client.query("SELECT id FROM sites WHERE id=$1",[req.body.site_id])).rows[0];
    if(!site)throw Error("현장을 찾을 수 없습니다.");
    const sr=req.body.site_role|| (role==="ADMIN"?"ADMIN":role);
-   if(!VALID_ROLES.has(sr))throw Error("현장 권한이 올바르지 않습니다.");
+   if(!VALID_ROLES.has(sr)||sr==='ADMIN'&&role!=='ADMIN'||role==='ADMIN'&&sr!=='ADMIN')throw Error("현장 권한이 올바르지 않습니다.");
+   const cid=req.body.contractor_id==null||req.body.contractor_id===''?null:Number(req.body.contractor_id);
+   const companyRole=['USER','CONTRACTOR_MANAGER'].includes(sr);
+   if(companyRole&&(!Number.isSafeInteger(cid)||cid<1)||!companyRole&&cid!==null)throw Error('협력사 계정은 소속 업체를 선택하고 원청 계정은 원청으로 등록하세요.');
+   if(cid!==null&&!(await client.query('SELECT id FROM contractors WHERE id=$1 AND site_id=$2 AND active=true',[cid,site.id])).rows.length)throw Error('해당 현장의 활성 협력업체를 선택하세요.');
    await client.query("INSERT INTO memberships(user_id,site_id,role) VALUES($1,$2,$3)",[nu.id,site.id,sr]);
+   if(cid!==null)await client.query('INSERT INTO contractor_memberships(user_id,site_id,contractor_id,assigned_by) VALUES($1,$2,$3,$4)',[nu.id,site.id,cid,req.session.userId]);
   }
   await client.query("COMMIT");res.status(201).json(nu);
  }catch(e){await client.query("ROLLBACK");res.status(400).json({error:e.code==="23505"?"이미 등록된 이메일입니다.":e.message})}finally{client.release()}
@@ -1240,16 +1277,28 @@ app.post("/api/change-password",auth,async(req,res)=>{
  req.session.sessionVersion=updated.session_version;
  res.json({ok:true});
 });
-app.post("/api/users/:id/sites",auth,async(req,res)=>{
+app.post("/api/users/:id/sites",auth,async(req,res,next)=>{try{
  if(!(await adminOnly(req,res)))return;
- const role=req.body.role||"USER";
- if(!VALID_ROLES.has(role))return res.status(400).json({error:"현장 권한이 올바르지 않습니다."});
- const u=await one("SELECT id FROM users WHERE id=$1 AND archived_at IS NULL",[req.params.id]),site=await one("SELECT id FROM sites WHERE id=$1",[req.body.site_id]);
- if(!u||!site)return res.status(404).json({error:"사용자 또는 현장을 찾을 수 없습니다."});
- await pool.query("INSERT INTO memberships(user_id,site_id,role) VALUES($1,$2,$3) ON CONFLICT(user_id,site_id) DO UPDATE SET role=EXCLUDED.role",[u.id,site.id,role]);
- if(!['USER','CONTRACTOR_MANAGER'].includes(role))await pool.query('DELETE FROM contractor_memberships WHERE user_id=$1 AND site_id=$2',[u.id,site.id]);
- res.json({ok:true});
-});
+ const role=req.body.role||"USER",sid=Number(req.body.site_id),cid=req.body.contractor_id==null||req.body.contractor_id===''?null:Number(req.body.contractor_id);
+ if(!VALID_ROLES.has(role)||!Number.isSafeInteger(sid)||sid<1)return res.status(400).json({error:"현장 권한이 올바르지 않습니다."});
+ const companyRole=['USER','CONTRACTOR_MANAGER'].includes(role);
+ if(companyRole&&(!Number.isSafeInteger(cid)||cid<1)||!companyRole&&cid!==null)return res.status(400).json({error:'소속 업체와 현장 권한을 확인하세요.'});
+ const client=await pool.connect();try{
+  await client.query('BEGIN');await client.query('SELECT pg_advisory_xact_lock($1,0)',[sid]);
+  const u=(await client.query('SELECT id,role FROM users WHERE id=$1 AND archived_at IS NULL FOR UPDATE',[req.params.id])).rows[0],site=(await client.query('SELECT id FROM sites WHERE id=$1',[sid])).rows[0];
+  if(!u||!site)throw Error('사용자 또는 현장을 찾을 수 없습니다.');
+  if(role==='ADMIN'&&u.role!=='ADMIN'||u.role==='ADMIN'&&role!=='ADMIN')throw Error('최고관리자 계정과 현장 권한을 확인하세요.');
+  if(cid!==null&&!(await client.query('SELECT id FROM contractors WHERE id=$1 AND site_id=$2 AND active=true',[cid,sid])).rows.length)throw Error('해당 현장의 활성 협력업체를 선택하세요.');
+  const current=(await client.query('SELECT role FROM memberships WHERE user_id=$1 AND site_id=$2',[u.id,sid])).rows[0];
+  if(current&&current.role!==role&&(await client.query(`SELECT w.id FROM weekly_risk_reviews w JOIN weekly_risk_revisions r ON r.weekly_id=w.id AND r.revision=w.revision WHERE w.site_id=$1 AND w.status='PENDING' AND (r.safety_user_id=$2 OR r.director_user_id=$2) LIMIT 1`,[sid,u.id])).rows.length)throw Error('진행 중인 원청 결재를 완료하거나 반려한 뒤 권한을 변경하세요.');
+  await client.query("INSERT INTO memberships(user_id,site_id,role) VALUES($1,$2,$3) ON CONFLICT(user_id,site_id) DO UPDATE SET role=EXCLUDED.role",[u.id,site.id,role]);
+  if(cid===null)await client.query('DELETE FROM contractor_memberships WHERE user_id=$1 AND site_id=$2',[u.id,sid]);
+  else await client.query('INSERT INTO contractor_memberships(user_id,site_id,contractor_id,assigned_by) VALUES($1,$2,$3,$4) ON CONFLICT(user_id,site_id) DO UPDATE SET contractor_id=EXCLUDED.contractor_id,assigned_by=EXCLUDED.assigned_by,assigned_at=now()',[u.id,sid,cid,req.session.userId]);
+  await client.query('UPDATE users SET session_version=session_version+1 WHERE id=$1',[u.id]);
+  await client.query('INSERT INTO admin_events(actor_id,category,action,object_id,details) VALUES($1,$2,$3,$4,$5::jsonb)',[req.session.userId,'site_users','ASSIGN',String(u.id),JSON.stringify({site_id:sid,role,contractor_id:cid})]);
+  await client.query('COMMIT');res.json({ok:true});
+ }catch(e){await client.query('ROLLBACK');res.status(400).json({error:e.message})}finally{client.release()}
+}catch(e){next(e)}});
 app.delete("/api/users/:id/sites/:siteId",auth,async(req,res)=>{
  if(!(await adminOnly(req,res)))return;
  await pool.query("DELETE FROM contractor_memberships WHERE user_id=$1 AND site_id=$2",[req.params.id,req.params.siteId]);
@@ -1690,7 +1739,7 @@ app.put('/api/admin/approvals/:type/:id',auth,(req,res)=>res.status(409).json({
 }));
 app.get('/api/admin/announcements',auth,async(req,res,next)=>{try{
  const sid=Number(req.query.site_id),u=await user(req);if(!(await can(req,sid)))return res.status(403).json({error:'현장 권한이 없습니다.'});
- res.json(await q('SELECT * FROM admin_announcements WHERE (site_id=$1 OR site_id IS NULL) AND (active=true OR $2) ORDER BY id DESC LIMIT 100',[sid,u.role==='ADMIN']));
+ res.json(await q('SELECT * FROM admin_announcements WHERE (site_id=$1 OR site_id IS NULL) AND contractor_id IS NULL AND archived_at IS NULL AND (active=true OR $2) ORDER BY id DESC LIMIT 100',[sid,u.role==='ADMIN']));
 }catch(e){next(e)}});
 app.post('/api/admin/announcements',auth,async(req,res,next)=>{try{
  if(!(await adminOnly(req,res)))return;const title=String(req.body.title||'').trim().slice(0,150),body=String(req.body.body||'').trim().slice(0,5000),sid=req.body.site_id==null?null:Number(req.body.site_id);
@@ -1698,9 +1747,9 @@ app.post('/api/admin/announcements',auth,async(req,res,next)=>{try{
  const row=await one('INSERT INTO admin_announcements(site_id,title,body,created_by) VALUES($1,$2,$3,$4) RETURNING *',[sid,title,body,req.session.userId]);await logAdmin(req,'announcement','CREATE',row.id);res.json(row);
 }catch(e){next(e)}});
 app.patch('/api/admin/announcements/:id',auth,async(req,res,next)=>{try{
- if(!(await adminOnly(req,res)))return;const old=await one('SELECT * FROM admin_announcements WHERE id=$1',[req.params.id]);if(!old)return res.status(404).json({error:'공지가 없습니다.'});
+ if(!(await adminOnly(req,res)))return;const old=await one('SELECT * FROM admin_announcements WHERE id=$1',[req.params.id]);if(!old||old.archived_at||old.contractor_id!=null)return res.status(404).json({error:'공지 게시판에서 관리해 주세요.'});
  const title=String(req.body.title??old.title).trim().slice(0,150),body=String(req.body.body??old.body).trim().slice(0,5000);if(!title||!body)return res.status(400).json({error:'제목과 내용을 입력하세요.'});
- const row=await one('UPDATE admin_announcements SET title=$1,body=$2,active=$3 WHERE id=$4 RETURNING *',[title,body,req.body.active??old.active,old.id]);await logAdmin(req,'announcement','UPDATE',row.id);res.json(row);
+ const row=await one('UPDATE admin_announcements SET title=$1,body=$2,active=$3,revision=revision+1,updated_at=now() WHERE id=$4 AND archived_at IS NULL AND contractor_id IS NULL RETURNING *',[title,body,req.body.active??old.active,old.id]);await logAdmin(req,'announcement','UPDATE',row.id);res.json(row);
 }catch(e){next(e)}});
 app.get('/api/admin/events',auth,async(req,res,next)=>{try{if(!(await adminOnly(req,res)))return;res.json(await q('SELECT e.*,u.name actor FROM admin_events e LEFT JOIN users u ON u.id=e.actor_id ORDER BY e.id DESC LIMIT 300'))}catch(e){next(e)}});
 app.get('/api/admin/stats',auth,async(req,res,next)=>{try{
@@ -1802,7 +1851,10 @@ app.get('/api/v5/report',auth,async(req,res,next)=>{try{
  res.set('Content-Type','text/html; charset=utf-8').send(`<!doctype html><html lang="ko"><meta charset="utf-8"><title>${escape(labels[type])} 보고서</title><style>body{font-family:Arial,'Malgun Gothic',sans-serif;padding:24px;color:#14243b}table{border-collapse:collapse;width:100%;font-size:11px}td,th{border:1px solid #b9c5d5;padding:6px;word-break:break-all}th{background:#edf2fa}@media print{button{display:none}body{padding:0}@page{size:A4 landscape;margin:12mm}}</style><h1>${escape(labels[type])} 현장 보고서</h1><p>현장: ${escape(site.name)} | 기간: ${escape(from||'전체')} ~ ${escape(to||'전체')} | 총 ${rows.length}건</p><button onclick="window.print()">인쇄 / PDF로 저장</button><table><thead><tr>${columns.map(c=>`<th>${escape(c)}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr>${columns.map(c=>`<td>${td(r[c])}</td>`).join('')}</tr>`).join('')}</tbody></table><p>※ 전자서명·법정 서식 검증을 대신하지 않는 조회용 보고서입니다.</p></html>`);
 }catch(e){next(e)}});
 
+app.use("/api/v21",(req,res,next)=>{res.set("Cache-Control","private, no-store");next()});
+v21Board.register({app,auth,q,one,pool,user,siteRole,companyScope});
+
 // 배포 파일 확인용 읽기 전용 엔드포인트. 로그인·DB·R2 설정을 공개하지 않는다.
-app.get('/api/version',(req,res)=>res.set('Cache-Control','no-store').json({version:'20.0.0',release:'2026-11-26',ui:'mobile-task-workspace-v20'}));
+app.get('/api/version',(req,res)=>res.set('Cache-Control','no-store').json({version:'22.0.0',release:'2026-11-27',ui:'template-catalog-v22'}));
 app.use((req,res)=>{if(req.method==="GET")res.sendFile(path.join(__dirname,"public","index.html"));else res.status(404).json({error:"요청을 찾을 수 없습니다."})});
 init().then(()=>app.listen(PORT,"0.0.0.0",()=>console.log(`Safety app running on ${PORT}`))).catch(e=>{console.error(e);process.exit(1)});

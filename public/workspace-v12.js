@@ -171,7 +171,7 @@
     }
     if(mode==='template' && typeof loadTemplates==='function')loadTemplates();
     activeMode(mode);
-    el('v12Focus')?.scrollIntoView({behavior:'instant',block:'nearest'});
+    if(mode==='template')requestAnimationFrame(()=>el('v12PanelTemplate')?.scrollIntoView({behavior:'instant',block:'start'}));else el('v12Focus')?.scrollIntoView({behavior:'instant',block:'nearest'});
   }
 
   function openWorkspace(mode='auto') {
